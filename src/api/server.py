@@ -11,7 +11,7 @@ import logging
 import time
 import uuid
 from contextlib import asynccontextmanager
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
@@ -99,6 +99,11 @@ class SessionResponse(BaseModel):
     thread_id: str
 
 
+class HistoryResponse(BaseModel):
+    thread_id: str
+    conversation_history: List[Dict[str, str]]
+
+
 # ─── HELPERS ────────────────────────────────────────────────────────────────────
 def _coerce_state_dict(state: Any) -> Dict[str, Any]:
     """Convert LangGraph state (Pydantic model or dict) to plain dict."""
@@ -175,6 +180,29 @@ async def new_session():
     return SessionResponse(thread_id=str(uuid.uuid4()))
 
 
+@app.get("/api/v1/history/{thread_id}", response_model=HistoryResponse)
+async def get_history(thread_id: str):
+    """Retrieve conversation history for a given thread ID."""
+    try:
+        langgraph_app = get_app()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to load LangGraph app: {exc}")
+
+    run_config = build_run_config(thread_id)
+    try:
+        import anyio
+        snapshot = await anyio.to_thread.run_sync(langgraph_app.get_state, run_config)
+        if snapshot is not None and getattr(snapshot, "values", None) is not None:
+            state_dict = _coerce_state_dict(snapshot.values)
+            history = state_dict.get("conversation_history") or []
+            return HistoryResponse(thread_id=thread_id, conversation_history=history)
+    except Exception as exc:
+        logger.exception("Failed to retrieve state snapshot for thread %s", thread_id)
+        raise HTTPException(status_code=500, detail=f"Error fetching history: {exc}")
+
+    return HistoryResponse(thread_id=thread_id, conversation_history=[])
+
+
 @app.post("/api/v1/execute")
 async def execute_pipeline(req: ExecuteRequest):
     """
@@ -187,6 +215,10 @@ async def execute_pipeline(req: ExecuteRequest):
     """
 
     async def event_generator():
+        import asyncio
+        import anyio
+        from concurrent.futures import ThreadPoolExecutor
+
         try:
             langgraph_app = get_app()
         except Exception as exc:
@@ -206,11 +238,33 @@ async def execute_pipeline(req: ExecuteRequest):
         step_idx = 0
         telemetry = default_telemetry()
 
+        # Set up a queue and thread pool to run the synchronous stream iterator off the main event loop
+        queue = asyncio.Queue()
+        loop = asyncio.get_running_loop()
+
+        def run_graph_stream():
+            try:
+                for event in langgraph_app.stream(
+                    input_state, config=run_config, stream_mode="updates"
+                ):
+                    loop.call_soon_threadsafe(queue.put_nowait, ("event", event))
+                loop.call_soon_threadsafe(queue.put_nowait, ("complete", None))
+            except Exception as exc:
+                loop.call_soon_threadsafe(queue.put_nowait, ("error", exc))
+
+        executor = ThreadPoolExecutor(max_workers=1)
+        loop.run_in_executor(executor, run_graph_stream)
+
         try:
-            for event in langgraph_app.stream(
-                input_state, config=run_config, stream_mode="updates"
-            ):
-                for node_name, update in event.items():
+            while True:
+                msg_type, val = await queue.get()
+                if msg_type == "complete":
+                    break
+                elif msg_type == "error":
+                    raise val
+
+                # val is {node_name: update}
+                for node_name, update in val.items():
                     if not update:
                         continue
 
@@ -271,7 +325,6 @@ async def execute_pipeline(req: ExecuteRequest):
                         "event": "node_update",
                         "data": json.dumps(payload, default=str),
                     }
-
         except Exception as exc:
             logger.exception("Pipeline execution error")
             yield {
@@ -279,10 +332,12 @@ async def execute_pipeline(req: ExecuteRequest):
                 "data": json.dumps({"error": str(exc), "phase": "execution"}),
             }
             return
+        finally:
+            executor.shutdown(wait=False)
 
         # Final state from checkpoint
         try:
-            snapshot = langgraph_app.get_state(run_config)
+            snapshot = await anyio.to_thread.run_sync(langgraph_app.get_state, run_config)
             if snapshot is not None and getattr(snapshot, "values", None) is not None:
                 final_state = _coerce_state_dict(snapshot.values)
             else:

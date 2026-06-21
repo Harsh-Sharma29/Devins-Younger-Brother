@@ -4,8 +4,7 @@ import logging
 from dataclasses import dataclass
 from typing import Tuple, Optional
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_huggingface import HuggingFaceEndpoint
-from langchain_community.chat_models import ChatHuggingFace
+from langchain_huggingface import HuggingFaceEndpoint, ChatHuggingFace
 from langchain_core.messages import HumanMessage, SystemMessage
 
 logger = logging.getLogger(__name__)

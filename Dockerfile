@@ -1,4 +1,5 @@
-# Devin's Younger Brother — Streamlit dashboard (Python 3.10)
+# Devin's Younger Brother — Multi-service image (Python 3.10)
+# Used by docker-compose for both FastAPI backend and Streamlit frontend.
 FROM python:3.10-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -23,9 +24,11 @@ COPY src ./src
 
 RUN mkdir -p "${DYB_SANDBOX_DIR}"
 
-EXPOSE 8501
+# FastAPI backend (8000) and Streamlit frontend (8501)
+EXPOSE 8000 8501
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8501/_stcore/health')" || exit 1
 
+# Default CMD runs Streamlit; docker-compose overrides for the API service.
 CMD ["python", "-m", "streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]

@@ -196,6 +196,49 @@ CUSTOM_CSS = """
         font-size: 0.65rem; font-weight: 600; text-transform: uppercase;
         letter-spacing: 0.06em; color: var(--text-muted); margin-bottom: 0.5rem;
     }
+    /* Visual Pipeline Graph */
+    .pipeline-container {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        background: var(--bg-panel);
+        border: 1px solid var(--border-subtle);
+        border-radius: 12px;
+        padding: 0.75rem 1rem;
+        margin-bottom: 1.25rem;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+    }
+    .pipeline-node {
+        flex: 1;
+        text-align: center;
+        padding: 0.5rem 0.25rem;
+        border-radius: 8px;
+        background: var(--bg-elevated);
+        border: 1px solid var(--border-subtle);
+        color: var(--text-muted);
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.8rem;
+        font-weight: 500;
+        transition: all 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        position: relative;
+        opacity: 0.55;
+    }
+    .pipeline-arrow {
+        color: var(--text-dim);
+        font-size: 1rem;
+        padding: 0 0.5rem;
+        user-select: none;
+    }
+    .pipeline-node.node-active {
+        color: #ffffff !important;
+        background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%) !important;
+        border-color: var(--accent-cyan) !important;
+        transform: scale(1.08);
+        box-shadow: 0 0 18px rgba(0, 180, 216, 0.6), inset 0 0 6px rgba(0, 180, 216, 0.3) !important;
+        font-weight: 700;
+        z-index: 10;
+        opacity: 1.0 !important;
+    }
     /* Hide Streamlit chrome */
     #MainMenu { visibility: hidden; }
     footer { visibility: hidden; }
@@ -228,6 +271,16 @@ def _fetch_health() -> Dict[str, Any]:
         }
 
 
+def _fetch_history(thread_id: str) -> list:
+    """GET /api/v1/history/{thread_id} — returns the conversation history."""
+    try:
+        resp = requests.get(f"{API_BASE_URL}/api/v1/history/{thread_id}", timeout=5)
+        resp.raise_for_status()
+        return resp.json().get("conversation_history") or []
+    except Exception:
+        return []
+
+
 def _create_session() -> str:
     """POST /api/v1/session/new — returns a backend-generated thread_id."""
     try:
@@ -253,6 +306,7 @@ def _init_session() -> None:
         "telemetry": _default_telemetry(),
         "thread_id": str(uuid.uuid4()),
         "active_file": "main.py",
+        "active_node": None,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -267,6 +321,41 @@ def _append_console(line: str) -> str:
 
 def _get_telemetry() -> dict:
     return dict(st.session_state.get("telemetry") or _default_telemetry())
+
+
+def _render_pipeline_graph(active_node_name: Optional[str], *, container: Any) -> None:
+    """Render a visual horizontal pipeline graph highlighting the active node."""
+    node_mapping = {
+        "router_node": "Router",
+        "planner_agent": "Planner",
+        "coder_agent": "Coder",
+        "validator_node": "Validator",
+        "terminal_agent": "Sandbox",
+        "debugger_agent": "Debugger",
+    }
+    
+    blocks = ["Router", "Planner", "Coder", "Validator", "Sandbox", "Debugger"]
+    active_block = node_mapping.get(active_node_name) if active_node_name else None
+    
+    html = '<div class="pipeline-container">'
+    for i, block in enumerate(blocks):
+        is_active = (block == active_block)
+        active_class = "node-active" if is_active else ""
+        
+        icon = ""
+        if block == "Router": icon = "🧭 "
+        elif block == "Planner": icon = "📋 "
+        elif block == "Coder": icon = "💻 "
+        elif block == "Validator": icon = "🛡️ "
+        elif block == "Sandbox": icon = "📦 "
+        elif block == "Debugger": icon = "🪲 "
+        
+        html += f'<div class="pipeline-node {active_class}">{icon}{block}</div>'
+        if i < len(blocks) - 1:
+            html += '<div class="pipeline-arrow">➔</div>'
+    html += '</div>'
+    
+    container.markdown(html, unsafe_allow_html=True)
 
 
 # ─── RENDER HELPERS ─────────────────────────────────────────────────────────────
@@ -387,6 +476,7 @@ def _stream_from_api(
     code_slot: Any,
     telemetry_slot: Any,
     file_tabs_slot: Any,
+    pipeline_slot: Any,
 ) -> Dict[str, Any]:
     """POST to /api/v1/execute and consume SSE events, rendering updates live."""
 
@@ -440,6 +530,12 @@ def _stream_from_api(
                             term_delta = data.get("terminal_output_delta", "")
                             if term_delta:
                                 _append_console(term_delta)
+
+                            # Update active visual node
+                            active_node = data.get("node_name")
+                            if active_node:
+                                st.session_state["active_node"] = active_node
+                                _render_pipeline_graph(active_node, container=pipeline_slot)
 
                             # Update telemetry
                             tel = data.get("telemetry")
@@ -552,6 +648,7 @@ with st.sidebar:
         st.session_state["last_user_prompt"] = DEFAULT_PROMPT
         st.session_state["telemetry"] = _default_telemetry()
         st.session_state["active_file"] = "main.py"
+        st.session_state["active_node"] = None
         st.rerun()
 
     st.markdown("---")
@@ -597,6 +694,8 @@ st.markdown(
 )
 
 banner_slot = st.empty()
+pipeline_slot = st.empty()
+_render_pipeline_graph(st.session_state.get("active_node"), container=pipeline_slot)
 
 # 3-Pane IDE Layout: Status | Editor | Terminal
 col_status, col_editor, col_terminal = st.columns([2, 5, 3], gap="medium")
@@ -689,6 +788,22 @@ with col_status:
             unsafe_allow_html=True,
         )
 
+    # Chat history section using st.chat_message
+    st.markdown(
+        '<div class="panel-header" style="margin-top: 0.75rem;"><span class="panel-header-icon">💬</span> Chat History</div>',
+        unsafe_allow_html=True,
+    )
+    history = _fetch_history(st.session_state["thread_id"])
+    if history:
+        for msg in history:
+            with st.chat_message(msg["role"]):
+                st.markdown(f"<span style='font-size: 0.78rem;'>{msg['content']}</span>", unsafe_allow_html=True)
+    else:
+        st.markdown(
+            '<div style="font-size: 0.75rem; color: var(--text-dim); padding: 0.5rem;">No conversation history yet.</div>',
+            unsafe_allow_html=True,
+        )
+
 # 2. Center (50%): Monaco-style st_ace editor
 with col_editor:
     st.markdown(
@@ -731,6 +846,9 @@ if execute_clicked:
             '<div class="banner-warn"><strong>⚡ Pipeline Running</strong> — LangGraph streaming via API.</div>',
             unsafe_allow_html=True,
         )
+        st.session_state["active_node"] = None
+        _render_pipeline_graph(None, container=pipeline_slot)
+
         _render_telemetry_sidebar(status_telemetry_slot)
         _render_terminal(st.session_state["console_logs"], container=terminal_slot)
         _render_code_editor("", container=code_slot, readonly=True)
@@ -744,6 +862,7 @@ if execute_clicked:
                 code_slot=code_slot,
                 telemetry_slot=status_telemetry_slot,
                 file_tabs_slot=file_tabs_slot,
+                pipeline_slot=pipeline_slot,
             )
             st.session_state["dashboard_state"] = final_state
             st.session_state["last_run_ok"] = True
