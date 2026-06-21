@@ -1,11 +1,33 @@
 services:
-  devin-brother:
+  postgres:
+    image: postgres:16-alpine
+    container_name: devin-brother-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-devin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-devin}
+      POSTGRES_DB: ${POSTGRES_DB:-devin_brother}
+    volumes:
+      - dyb_postgres:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-devin} -d ${POSTGRES_DB:-devin_brother}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - dyb_internal
+    restart: unless-stopped
+
+  devin-api:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: devin-younger-brother
+    container_name: devin-api
+    command: ["uvicorn", "src.api.server:app", "--host", "0.0.0.0", "--port", "8000"]
     ports:
-      - "${STREAMLIT_PORT:-8501}:8501"
+      - "8000:8000"
     env_file:
       - .env
     environment:
@@ -13,12 +35,39 @@ services:
       GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
       HUGGINGFACEHUB_API_TOKEN: ${HUGGINGFACEHUB_API_TOKEN:-}
       DYB_SANDBOX_DIR: /tmp/devin_brother_sandbox
+      DATABASE_URL: postgresql://${POSTGRES_USER:-devin}:${POSTGRES_PASSWORD:-devin}@postgres:5432/${POSTGRES_DB:-devin_brother}?sslmode=disable
     volumes:
       - dyb_sandbox:/tmp/devin_brother_sandbox
-    # Mount host Docker socket only when running real LangGraph sandbox from the container:
-    # volumes:
-    #   - /var/run/docker.sock:/var/run/docker.sock
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - dyb_internal
     restart: unless-stopped
 
+  devin-ui:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: devin-ui
+    command: ["streamlit", "run", "app.py", "--server.port=8501", "--server.fileWatcherType=none"]
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env
+    environment:
+      DYB_API_URL: http://devin-api:8000
+    depends_on:
+      - devin-api
+    networks:
+      - dyb_internal
+    restart: unless-stopped
+
+networks:
+  dyb_internal:
+    driver: bridge
+
 volumes:
+  dyb_postgres:
   dyb_sandbox:

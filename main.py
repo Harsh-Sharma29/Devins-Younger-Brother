@@ -1,11 +1,12 @@
 import os
+import uuid
 from dotenv import load_dotenv
 
 load_dotenv()
 
-from src.core.graph import app, get_initial_state
-
-PIPELINE_CONFIG = {"recursion_limit": 50}
+from src.core.checkpointer import get_app, shutdown_checkpointer
+from src.core.config import build_run_config, DEFAULT_RECURSION_LIMIT
+from src.core.graph import get_initial_state
 
 DEFAULT_PROMPT = (
     "Write a python script that calls a mock API at 'https://api.example.com/data' "
@@ -18,14 +19,18 @@ DEFAULT_PROMPT = (
 def main():
     print("🚀 Initializing Devin's Younger Brother...\n" + "-" * 40)
 
+    thread_id = os.getenv("DYB_THREAD_ID", "").strip() or str(uuid.uuid4())
+    run_config = build_run_config(thread_id, recursion_limit=DEFAULT_RECURSION_LIMIT)
     initial_state = get_initial_state(DEFAULT_PROMPT)
 
     print(f"👤 User Prompt: {initial_state['user_prompt']}")
-    print(f"⚙️  recursion_limit: {PIPELINE_CONFIG['recursion_limit']}")
-    print("⏳ Invoking LangGraph pipeline...\n")
+    print(f"🧵 thread_id:     {thread_id}")
+    print(f"⚙️  recursion_limit: {run_config['recursion_limit']}")
+    print("⏳ Invoking LangGraph pipeline (Postgres checkpointer)...\n")
 
     try:
-        final_state = app.invoke(initial_state, config=PIPELINE_CONFIG)
+        app = get_app()
+        final_state = app.invoke(initial_state, config=run_config)
 
         if hasattr(final_state, "model_dump"):
             state_dict = final_state.model_dump()
@@ -55,6 +60,8 @@ def main():
 
     except Exception as e:
         print(f"❌ Error during graph invocation: {e}")
+    finally:
+        shutdown_checkpointer()
 
 
 if __name__ == "__main__":

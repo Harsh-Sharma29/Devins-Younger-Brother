@@ -1,20 +1,48 @@
 """
 Session telemetry helpers for the Streamlit dashboard.
-Estimates token throughput and simulates infra latency / resource load for demos.
+Captures real system metrics (CPU, RAM) and token throughput estimates.
 """
 
 from __future__ import annotations
 
+import time
 from typing import Any, Dict, Optional
+
+try:
+    import psutil
+    _PSUTIL_AVAILABLE = True
+except ImportError:
+    _PSUTIL_AVAILABLE = False
+
+
+def _real_cpu_pct() -> float:
+    """Return actual host CPU usage; gracefully degrade if psutil unavailable."""
+    if _PSUTIL_AVAILABLE:
+        try:
+            return psutil.cpu_percent(interval=None)
+        except Exception:
+            pass
+    return 0.0
+
+
+def _real_ram_pct() -> float:
+    """Return actual host RAM usage; gracefully degrade if psutil unavailable."""
+    if _PSUTIL_AVAILABLE:
+        try:
+            return psutil.virtual_memory().percent
+        except Exception:
+            pass
+    return 0.0
 
 
 def default_telemetry() -> Dict[str, Any]:
     return {
         "total_tokens": 0,
         "latency_ms": 0,
-        "cpu_pct": 0.0,
-        "ram_pct": 0.0,
+        "cpu_pct": _real_cpu_pct(),
+        "ram_pct": _real_ram_pct(),
         "resource_index": 0.0,
+        "_step_start_ts": time.time(),
     }
 
 
@@ -25,6 +53,26 @@ def estimate_tokens(*chunks: Optional[str]) -> int:
     return max(1, len(combined) // 4)
 
 
+def node_transition_line(node_name: str, status: str = "Active") -> str:
+    """Produce professional telemetry strings for LangGraph node transitions."""
+    ts = time.strftime("%H:%M:%S")
+    
+    # Map node names to clean labels
+    mapping = {
+        "coder_agent": "Coder",
+        "terminal_agent": "Terminal",
+        "debugger_agent": "Debugger",
+        "planner_agent": "Planner",
+        "router_node": "Router",
+        "validator_node": "Validator",
+        "research_agent": "Research",
+        "knowledge_agent": "Knowledge"
+    }
+    
+    clean_name = mapping.get(node_name, node_name.replace("_agent", "").replace("_node", "").replace("_", " ").title())
+    return f"[{ts}] Node: {clean_name} → {status}"
+
+
 def tick_telemetry(
     telemetry: Dict[str, Any],
     *,
@@ -33,28 +81,25 @@ def tick_telemetry(
     step_index: int = 0,
     final: bool = False,
 ) -> Dict[str, Any]:
-    """Advance telemetry counters for one pipeline step."""
+    """Advance telemetry counters for one pipeline step using real system data."""
     tel = dict(telemetry or default_telemetry())
     tel["total_tokens"] = int(tel.get("total_tokens", 0)) + estimate_tokens(log_line, code)
 
-    base_latency = int(tel.get("latency_ms", 0))
-    if "FAILED" in log_line:
-        tel["latency_ms"] = min(2400, base_latency + 380 + step_index * 45)
-    elif final:
-        tel["latency_ms"] = max(38, base_latency // 3 if base_latency else 48)
-    else:
-        tel["latency_ms"] = min(1850, 95 + step_index * 88 + (tel["total_tokens"] % 180))
+    # Real latency: wall-clock delta since last step
+    now = time.time()
+    prev_ts = float(tel.get("_step_start_ts", now))
+    tel["latency_ms"] = int((now - prev_ts) * 1000)
+    tel["_step_start_ts"] = now
 
-    cpu = min(99.0, 24.0 + step_index * 12.0 + (14.0 if "Debugger" in log_line else 0.0))
-    ram = min(96.0, 18.0 + step_index * 8.5 + (tel["total_tokens"] / 420.0))
-    tel["cpu_pct"] = round(cpu, 1)
-    tel["ram_pct"] = round(ram, 1)
+    # Real system metrics
+    tel["cpu_pct"] = round(_real_cpu_pct(), 1)
+    tel["ram_pct"] = round(_real_ram_pct(), 1)
     tel["resource_index"] = round((tel["cpu_pct"] + tel["ram_pct"]) / 2.0, 1)
     return tel
 
 
 def telemetry_from_state(dashboard_state: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    """Derive telemetry snapshot from a LangGraph result when live mode is used."""
+    """Derive telemetry snapshot from a LangGraph result using real system data."""
     if not dashboard_state:
         return default_telemetry()
 
@@ -63,15 +108,12 @@ def telemetry_from_state(dashboard_state: Optional[Dict[str, Any]]) -> Dict[str,
     term = dashboard_state.get("terminal_output") or ""
     tokens = estimate_tokens("\n".join(logs), code, term)
 
-    errors = dashboard_state.get("detected_errors") or []
-    verified = bool(dashboard_state.get("is_verified"))
-    latency = 52 if verified and not errors else min(2200, 140 + len(errors) * 220 + tokens % 90)
+    cpu = _real_cpu_pct()
+    ram = _real_ram_pct()
 
-    cpu = 32.0 if verified else min(94.0, 40.0 + len(errors) * 12.0)
-    ram = min(88.0, 26.0 + tokens / 380.0)
     return {
         "total_tokens": tokens,
-        "latency_ms": int(latency),
+        "latency_ms": dashboard_state.get("latency_ms", 0),
         "cpu_pct": round(cpu, 1),
         "ram_pct": round(ram, 1),
         "resource_index": round((cpu + ram) / 2.0, 1),

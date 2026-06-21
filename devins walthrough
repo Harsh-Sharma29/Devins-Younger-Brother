@@ -1,0 +1,152 @@
+# FastAPI/Streamlit Decoupling — Walkthrough
+
+## Summary
+
+Decoupled the monolithic Streamlit app into a **FastAPI backend** (port 8000) that owns all LangGraph execution, Postgres checkpointing, Docker sandbox, and telemetry, and a **Streamlit frontend** (port 8501) that is a pure HTTP client rendering the same Pro IDE layout.
+
+**3 files created, 4 files modified, 0 backend modules changed.**
+
+---
+
+## Architecture
+
+```mermaid
+graph LR
+    subgraph "Frontend (Streamlit :8501)"
+        A["app.py<br/>Pro IDE Layout"]
+    end
+    subgraph "Backend (FastAPI :8000)"
+        B["server.py"] --> C["checkpointer.py<br/>PostgresSaver"]
+        B --> D["graph.py<br/>LangGraph StateGraph"]
+        B --> E["telemetry.py<br/>psutil metrics"]
+        D --> F["Agents<br/>(coder, terminal, debugger...)"]
+        F --> G["file_ops.py<br/>Docker sandbox"]
+    end
+    A -->|"POST /api/v1/execute (SSE)"| B
+    A -->|"GET /api/v1/health"| B
+    A -->|"POST /api/v1/session/new"| B
+    C --> H[("Postgres :5432")]
+    G --> I["Docker Engine"]
+```
+
+---
+
+## New Files
+
+### [\_\_init\_\_.py](file:///c:/Users/Harsh%20Sharma/OneDrive/Desktop/Devin/src/api/__init__.py)
+Package init for `src.api`.
+
+### [server.py](file:///c:/Users/Harsh%20Sharma/OneDrive/Desktop/Devin/src/api/server.py)
+FastAPI application with:
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/api/v1/health` | GET | Postgres status, API key checks, psutil telemetry |
+| `/api/v1/session/new` | POST | Generate backend-authoritative thread IDs |
+| `/api/v1/execute` | POST | SSE-streaming LangGraph execution |
+
+**SSE Protocol**: The `/execute` endpoint streams three event types:
+- `node_update` — After each graph node completes: transition label, new pipeline logs, terminal output delta, workspace_files, active_file, code_buffer, telemetry snapshot
+- `complete` — Final accumulated state with all fields
+- `error` — Exception details with phase identification
+
+**Lifecycle**: Uses FastAPI lifespan to eagerly compile the LangGraph app on startup and cleanup the Postgres connection pool on shutdown.
+
+---
+
+## Modified Files
+
+### [app.py](file:///c:/Users/Harsh%20Sharma/OneDrive/Desktop/Devin/app.py) — Frontend Rewrite
+
+**Removed imports**:
+- `src.core.checkpointer` (get_app, check_postgres_health, is_using_fallback)
+- `src.core.config` (DEFAULT_RECURSION_LIMIT, build_run_config)
+- `src.core.graph` (get_initial_state)
+- `src.core.telemetry` (default_telemetry, tick_telemetry, telemetry_from_state, node_transition_line)
+
+**Added**:
+- `import requests` — HTTP client for API communication
+- `import json` — SSE payload parsing
+- `API_BASE_URL = os.getenv("DYB_API_URL", "http://localhost:8000")` — configurable API endpoint
+
+**New functions**:
+- `_fetch_health()` — GETs `/api/v1/health` for the status panel
+- `_create_session()` — POSTs `/api/v1/session/new` for new thread IDs
+- `_stream_from_api()` — POSTs to `/api/v1/execute` with `stream=True`, parses SSE events, and renders updates to the same Streamlit slots
+
+**Preserved unchanged**:
+- 3-pane layout (`st.columns([2, 5, 3])`)
+- All CSS (dark theme, animations, Consolas terminal, JetBrains Mono)
+- `streamlit-ace` Monokai editor with DuplicateWidgetID fix
+- File tabs, file selector dropdown, file explorer
+- Banner system (running/success/error)
+- Sidebar with API connections panel
+
+### [requirements.txt](file:///c:/Users/Harsh%20Sharma/OneDrive/Desktop/Devin/requirements.txt)
+Added: `fastapi==0.115.12`, `uvicorn[standard]==0.34.3`, `sse-starlette==2.3.6`, `requests>=2.31.0`
+
+### [docker-compose.yml](file:///c:/Users/Harsh%20Sharma/OneDrive/Desktop/Devin/docker-compose.yml)
+Split into 3 services:
+
+| Service | Container | Port | Role |
+|---------|-----------|------|------|
+| `postgres` | devin-brother-postgres | 5432 | Database |
+| `devin-api` | devin-api | 8000 | FastAPI backend |
+| `devin-ui` | devin-ui | 8501 | Streamlit frontend |
+
+The UI service has `DYB_API_URL=http://devin-api:8000` for Docker networking.
+
+### [.env](file:///c:/Users/Harsh%20Sharma/OneDrive/Desktop/Devin/.env)
+Added `DYB_API_URL=http://localhost:8000` for local development.
+
+---
+
+## Backend Modules (Unchanged)
+
+| File | Status |
+|------|--------|
+| `src/core/graph.py` | Unchanged — imported by server.py |
+| `src/core/checkpointer.py` | Unchanged — imported by server.py |
+| `src/core/config.py` | Unchanged — imported by server.py |
+| `src/core/telemetry.py` | Unchanged — imported by server.py |
+| `src/agents/*` | Unchanged — consumed through the graph |
+| `src/tools/file_ops.py` | Unchanged — Docker sandbox via graph |
+
+---
+
+## Verification
+
+| Check | Result |
+|-------|--------|
+| Syntax check (app.py, server.py) | ✅ PASS |
+| Dependencies installed | ✅ fastapi 0.115.12, uvicorn 0.34.3, sse-starlette 2.3.6 |
+| FastAPI health endpoint (200 OK) | ✅ PASS — Postgres: Connected, Gemini: True, HF: True |
+| Streamlit connects to API | ✅ PASS — "Backend API: Connected" in sidebar |
+| Postgres 🟢 in left pane | ✅ PASS |
+| 3-pane layout preserved | ✅ PASS |
+
+## Screenshots
+
+![Decoupled Pro IDE — Initial Load](C:/Users/Harsh Sharma/.gemini/antigravity-ide/brain/d7e692a1-7954-4f86-92ad-619b564bc17b/streamlit_init_1782056640555.png)
+
+![Sidebar with API Connections](C:/Users/Harsh Sharma/.gemini/antigravity-ide/brain/d7e692a1-7954-4f86-92ad-619b564bc17b/streamlit_scrolled_1782056653780.png)
+
+---
+
+## How to Run Locally
+
+```bash
+# 1. Start Postgres (if not already running)
+docker-compose up -d postgres
+
+# 2. Start FastAPI backend (port 8000)
+python -m uvicorn src.api.server:app --host 0.0.0.0 --port 8000
+
+# 3. Start Streamlit frontend (port 8501) in a separate terminal
+python -m streamlit run app.py --server.port=8501 --server.fileWatcherType=none
+```
+
+Or with Docker Compose:
+```bash
+docker-compose up -d
+```

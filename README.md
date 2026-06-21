@@ -132,10 +132,9 @@ The dashboard exposes:
 
 - **Total Tokens Processed** — cumulative throughput estimate
 - **Active Infrastructure Latency (ms)** — sandbox + routing round-trip
-- **Agent Resource Usage Index** — CPU/RAM simulation metrics
-- **Live Sandbox Console** — full `pipeline_logs` stream including Validator rejections
+- **Agent Resource Usage Index** — CPU/RAM metrics derived from live pipeline state
 
-> **Note:** The Streamlit dashboard includes a portfolio simulation bypass for reliable demos when LangGraph metadata locks occur. The CLI entry point (`main.py`) invokes the full live graph.
+> **Note:** The Streamlit dashboard streams the live LangGraph pipeline with Postgres checkpointing. Use **New Session** to reset `thread_id` and clear stale checkpoint state.
 
 ---
 
@@ -279,7 +278,7 @@ Dashboard available at **http://localhost:8501**.
 
 ```
 Devin/
-├── app.py                          # Streamlit dashboard + telemetry + simulation bypass
+├── app.py                          # Streamlit dashboard + live LangGraph streaming
 ├── main.py                         # CLI LangGraph entry point
 ├── Dockerfile                      # Production Streamlit image (Python 3.10)
 ├── docker-compose.yml              # Container orchestration
@@ -332,7 +331,7 @@ Devin/
 - **Dual state access** — All nodes accept both Pydantic models and raw dicts for LangGraph version resilience.
 - **Router-first execution** — Prevents unnecessary Docker spin-up for research and generic queries.
 - **Validator-before-sandbox** — Catches dangerous patterns and missing error handling before runtime failures.
-- **Portfolio simulation bypass** — Dashboard can demo the full narrative without LangGraph ADC deadlocks.
+- **Live dashboard streaming** — `app.stream()` pipes real node updates to the console and code workspace.
 
 ---
 

@@ -1,264 +1,258 @@
 """
-Devin's Younger Brother — Enterprise Streamlit Dashboard
-Portfolio simulation mode bypasses LangGraph init deadlocks for reliable demos.
+Devin's Younger Brother — Pro IDE Workbench (Frontend)
+Pure Streamlit frontend. Communicates with the FastAPI backend via HTTP/SSE.
+Multi-file workspace · Real-time telemetry · Monaco-style code editor.
 """
 
 from __future__ import annotations
 
 import importlib.metadata
+import json
 import os
-import time
-from typing import Any, Optional, Tuple
+import uuid
+from typing import Any, Dict, Optional
+
+import requests
 
 if not hasattr(importlib.metadata, "packages_distributions"):
     def mock_packages_distributions():
         return {}
-
     importlib.metadata.packages_distributions = mock_packages_distributions
 
 import streamlit as st
+from streamlit_ace import st_ace
 from dotenv import load_dotenv
-
-from src.core.telemetry import (
-    default_telemetry,
-    tick_telemetry,
-    telemetry_from_state,
-)
 
 load_dotenv()
 
-PIPELINE_CONFIG_DEFAULT = {"recursion_limit": 50}
-SIM_STEP_SECONDS = 4.0
+# ─── API CONFIG ─────────────────────────────────────────────────────────────────
+API_BASE_URL = os.getenv("DYB_API_URL", "http://localhost:8000").rstrip("/")
+DEFAULT_RECURSION_LIMIT = 50
 
 st.set_page_config(
-    page_title="Devin's Younger Brother",
+    page_title="Devin's Younger Brother — Pro IDE",
     page_icon="🤖",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
+# ─── CUSTOM CSS ─────────────────────────────────────────────────────────────────
 CUSTOM_CSS = """
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Inter:wght@400;500;600;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap');
     :root {
-        --bg-deep: #121212; --bg-panel: #1a1a1e; --bg-elevated: #222228;
-        --border-subtle: #2e2e36; --text-primary: #e8eaed; --text-muted: #9aa0a6;
-        --accent-cyan: #00d4ff; --accent-glow: rgba(0, 212, 255, 0.35);
+        --bg-deep: #0a0a0f; --bg-panel: #111117; --bg-elevated: #1a1a22;
+        --border-subtle: #23232e; --border-active: #2d5a8a;
+        --text-primary: #e2e4e9; --text-muted: #6b7280; --text-dim: #4b5563;
+        --accent-cyan: #00b4d8; --accent-blue: #3b82f6; --accent-emerald: #10b981;
+        --accent-glow: rgba(0, 180, 216, 0.2);
+        --terminal-bg: #000000; --terminal-green: #39ff14; --terminal-white: #d1d5db;
     }
-    .stApp { background: #121212; font-family: 'Inter', system-ui, sans-serif; }
+    .stApp {
+        background: var(--bg-deep);
+        font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    }
     [data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #16161a 0%, #121212 100%);
+        background: linear-gradient(180deg, #0d0d14 0%, #0a0a0f 100%);
         border-right: 1px solid var(--border-subtle);
     }
     h1, h2, h3, h4, p, label, span, .stMarkdown { color: var(--text-primary); }
     .stTextArea textarea {
         background: var(--bg-elevated) !important; color: var(--text-primary) !important;
         border: 1px solid var(--border-subtle) !important; border-radius: 8px !important;
-        font-family: 'JetBrains Mono', monospace !important;
+        font-family: 'JetBrains Mono', monospace !important; font-size: 0.82rem !important;
     }
-    div[data-testid="stMetric"] {
-        background: var(--bg-panel); border: 1px solid var(--border-subtle);
-        border-radius: 12px; padding: 1rem 1.25rem;
-    }
-    div[data-testid="stMetric"] label { color: var(--text-muted) !important; font-size: 0.75rem !important; }
-    div[data-testid="stMetric"] [data-testid="stMetricValue"] { color: var(--accent-cyan) !important; font-weight: 700 !important; }
     div[data-testid="stButton"] button {
-        width: 100%; min-height: 3.25rem; font-weight: 600 !important; border-radius: 10px !important;
+        width: 100%; min-height: 3rem; font-weight: 600 !important; border-radius: 8px !important;
         border: 1px solid var(--accent-cyan) !important;
-        background: linear-gradient(135deg, #0e7490 0%, #0369a1 50%, #1d4ed8 100%) !important;
-        color: #fff !important; box-shadow: 0 0 20px var(--accent-glow) !important;
+        background: linear-gradient(135deg, #0c4a6e 0%, #0369a1 50%, #1e40af 100%) !important;
+        color: #fff !important; box-shadow: 0 0 16px var(--accent-glow) !important;
+        transition: all 0.2s ease;
     }
-    .dyb-header { padding: 0.5rem 0 1.5rem; border-bottom: 1px solid var(--border-subtle); margin-bottom: 1.25rem; }
-    .dyb-title {
-        font-size: 1.75rem; font-weight: 700;
-        background: linear-gradient(90deg, #00d4ff, #60a5fa);
-        -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin: 0;
+    div[data-testid="stButton"] button:hover {
+        box-shadow: 0 0 28px rgba(0, 180, 216, 0.4) !important;
+        transform: translateY(-1px);
     }
-    .dyb-subtitle { color: var(--text-muted); font-size: 0.9rem; margin-top: 0.25rem; }
-    .dyb-panel-header {
-        font-size: 1rem; font-weight: 600; color: var(--accent-cyan);
-        margin-bottom: 0.75rem; padding-bottom: 0.5rem; border-bottom: 1px solid var(--border-subtle);
+    /* IDE Header */
+    .ide-header {
+        padding: 0.4rem 0 1rem;
+        border-bottom: 1px solid var(--border-subtle);
+        margin-bottom: 0.75rem;
+        display: flex; align-items: center; gap: 0.75rem;
     }
-    .dyb-code-empty {
-        background: var(--bg-panel); border: 1px dashed var(--border-subtle); border-radius: 10px;
-        padding: 2.5rem 1.5rem; text-align: center; color: var(--text-muted);
-        font-family: 'JetBrains Mono', monospace; font-size: 0.85rem;
+    .ide-title {
+        font-size: 1.5rem; font-weight: 700;
+        background: linear-gradient(90deg, #00b4d8, #3b82f6, #8b5cf6);
+        -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+        margin: 0;
     }
-    .dyb-terminal {
-        background: #0d0d0f; border: 1px solid #2a2a32; border-radius: 10px;
-        padding: 1rem 1.25rem; min-height: 420px; max-height: 520px; overflow-y: auto;
-        font-family: 'JetBrains Mono', monospace; font-size: 0.78rem; line-height: 1.55;
-        color: #a3e635; box-shadow: inset 0 2px 12px rgba(0, 0, 0, 0.6);
+    .ide-mode-badge {
+        display: inline-flex; align-items: center; gap: 0.35rem;
+        padding: 0.2rem 0.65rem; border-radius: 999px;
+        background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.3);
+        font-size: 0.7rem; font-weight: 600; color: #34d399;
+        letter-spacing: 0.04em;
+    }
+    .ide-mode-dot {
+        width: 6px; height: 6px; border-radius: 50%;
+        background: #34d399;
+        animation: pulse-dot 2s ease-in-out infinite;
+    }
+    @keyframes pulse-dot {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.4; }
+    }
+    /* Panel headers */
+    .panel-header {
+        font-size: 0.72rem; font-weight: 600; letter-spacing: 0.06em;
+        text-transform: uppercase; color: var(--text-muted);
+        padding: 0.5rem 0.75rem; margin-bottom: 0.5rem;
+        border-bottom: 1px solid var(--border-subtle);
+        display: flex; align-items: center; gap: 0.5rem;
+    }
+    .panel-header-icon { font-size: 0.85rem; }
+    /* File tab bar */
+    .file-tabs {
+        display: flex; gap: 0; overflow-x: auto;
+        border-bottom: 1px solid var(--border-subtle);
+        background: var(--bg-panel);
+        padding: 0 0.5rem;
+    }
+    .file-tab {
+        padding: 0.45rem 0.85rem; font-size: 0.72rem; font-weight: 500;
+        font-family: 'JetBrains Mono', monospace;
+        color: var(--text-muted); cursor: pointer;
+        border-bottom: 2px solid transparent;
+        transition: all 0.15s ease; white-space: nowrap;
+    }
+    .file-tab:hover { color: var(--text-primary); background: var(--bg-elevated); }
+    .file-tab-active {
+        color: var(--accent-cyan) !important;
+        border-bottom-color: var(--accent-cyan) !important;
+        background: var(--bg-elevated);
+    }
+    /* Code workspace empty state */
+    .code-empty {
+        background: var(--bg-panel); border: 1px dashed var(--border-subtle);
+        border-radius: 8px; padding: 3rem 1.5rem; text-align: center;
+        color: var(--text-dim); font-family: 'JetBrains Mono', monospace;
+        font-size: 0.8rem;
+    }
+    /* Terminal */
+    .ide-terminal {
+        background: var(--terminal-bg);
+        border: 1px solid #1a1a1a; border-radius: 8px;
+        padding: 0.75rem 1rem;
+        min-height: 460px; max-height: 560px; overflow-y: auto;
+        font-family: 'Consolas', 'Courier New', monospace;
+        font-size: 0.75rem; line-height: 1.6;
+        color: var(--terminal-green);
+        box-shadow: inset 0 2px 10px rgba(0, 0, 0, 0.8);
         white-space: pre-wrap;
     }
-    .dyb-banner-ok {
-        background: rgba(34,197,94,0.12); border: 1px solid rgba(34,197,94,0.45);
-        border-radius: 10px; padding: 0.85rem 1.1rem; margin-bottom: 1rem; color: #86efac;
+    .ide-terminal .sys-msg { color: var(--terminal-white); }
+    .ide-terminal .err-msg { color: #f87171; }
+    .ide-terminal .node-msg { color: #60a5fa; }
+    /* Banners */
+    .banner-ok {
+        background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3);
+        border-radius: 8px; padding: 0.65rem 1rem; margin-bottom: 0.75rem;
+        color: #6ee7b7; font-size: 0.82rem;
     }
-    .dyb-banner-warn {
-        background: linear-gradient(90deg, rgba(245,158,11,0.15), rgba(0,212,255,0.1));
-        border: 1px solid rgba(245,158,11,0.4); border-radius: 10px;
-        padding: 0.85rem 1.1rem; margin-bottom: 1rem; color: #fcd34d;
+    .banner-warn {
+        background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.3);
+        border-radius: 8px; padding: 0.65rem 1rem; margin-bottom: 0.75rem;
+        color: #fbbf24; font-size: 0.82rem;
     }
-    .dyb-pill { display: inline-block; padding: 0.2rem 0.6rem; border-radius: 999px; font-size: 0.7rem; font-weight: 600; margin-left: 0.5rem; }
-    .dyb-pill-live { background: rgba(34,197,94,0.2); color: #4ade80; }
-    .dyb-telemetry {
-        background: linear-gradient(135deg, #1a1a22 0%, #16161c 100%);
-        border: 1px solid var(--border-subtle); border-radius: 12px;
-        padding: 1rem 1.25rem 0.75rem; margin-bottom: 1.25rem;
+    .banner-error {
+        background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.3);
+        border-radius: 8px; padding: 0.65rem 1rem; margin-bottom: 0.75rem;
+        color: #fca5a5; font-size: 0.82rem;
     }
-    .dyb-telemetry-title {
-        font-size: 0.8rem; font-weight: 600; letter-spacing: 0.06em;
-        text-transform: uppercase; color: var(--text-muted); margin-bottom: 0.75rem;
-    }
-    .dyb-telemetry-grid {
-        display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.75rem;
-    }
-    @media (max-width: 900px) { .dyb-telemetry-grid { grid-template-columns: 1fr; } }
-    .dyb-telemetry-card {
+    /* Telemetry cards */
+    .tel-card-sidebar {
         background: var(--bg-elevated); border: 1px solid var(--border-subtle);
-        border-radius: 10px; padding: 0.85rem 1rem;
+        border-radius: 8px; padding: 0.6rem 0.75rem; margin-bottom: 0.5rem;
     }
-    .dyb-telemetry-label { font-size: 0.7rem; color: var(--text-muted); margin-bottom: 0.35rem; }
-    .dyb-telemetry-value {
-        font-family: 'JetBrains Mono', monospace; font-size: 1.15rem;
-        font-weight: 600; color: var(--accent-cyan);
+    .tel-label { font-size: 0.62rem; color: var(--text-muted); margin-bottom: 0.2rem; text-transform: uppercase; letter-spacing: 0.05em; }
+    .tel-value { font-family: 'JetBrains Mono', monospace; font-size: 1rem; font-weight: 600; color: var(--accent-cyan); }
+    .tel-sub { font-size: 0.6rem; color: var(--text-dim); margin-top: 0.15rem; }
+    /* Status indicators */
+    .status-connected { color: #34d399; }
+    .status-fallback { color: #fbbf24; }
+    .status-error { color: #f87171; }
+    .status-dot {
+        display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 0.4rem;
     }
-    .dyb-telemetry-sub { font-size: 0.68rem; color: var(--text-muted); margin-top: 0.25rem; }
+    .dot-green { background: #34d399; box-shadow: 0 0 6px rgba(52, 211, 153, 0.5); }
+    .dot-yellow { background: #fbbf24; box-shadow: 0 0 6px rgba(251, 191, 36, 0.5); }
+    .dot-red { background: #f87171; box-shadow: 0 0 6px rgba(248, 113, 113, 0.5); }
+    /* Sidebar section */
+    .sidebar-section {
+        background: var(--bg-elevated); border: 1px solid var(--border-subtle);
+        border-radius: 8px; padding: 0.75rem; margin-bottom: 0.75rem;
+    }
+    .sidebar-section-title {
+        font-size: 0.65rem; font-weight: 600; text-transform: uppercase;
+        letter-spacing: 0.06em; color: var(--text-muted); margin-bottom: 0.5rem;
+    }
+    /* Hide Streamlit chrome */
     #MainMenu { visibility: hidden; }
     footer { visibility: hidden; }
+    header[data-testid="stHeader"] { background: transparent; }
 </style>
 """
 
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
 DEFAULT_PROMPT = (
-    "Write a Python script that calls a mock API at 'https://api.example.com/data' "
-    "using the requests library, parses the JSON response, and handles a missing "
-    "'items' key. Introduce an intentional import error on the first run."
+    "Create a simple text file named test.txt with the content "
+    "'Hello from Devin\\'s Younger Brother'."
 )
 
-MOCK_PRE_VALIDATOR_CODE = '''"""First draft — uses requests, no try/except (Validator will reject)."""
-import requests
 
-API_URL = "https://api.example.com/data"
-
-def fetch_data():
-    resp = requests.get(API_URL, timeout=10)
-    return resp.json().get("items", [])
-
-if __name__ == "__main__":
-    print(fetch_data())
-'''
-
-MOCK_BROKEN_CODE = '''"""Second draft — try/except added; still uses requests (sandbox fail)."""
-import requests
-
-API_URL = "https://api.example.com/data"
-
-def fetch_data():
+# ─── API CLIENT ─────────────────────────────────────────────────────────────────
+def _fetch_health() -> Dict[str, Any]:
+    """GET /api/v1/health — returns Postgres status, API keys, telemetry."""
     try:
-        resp = requests.get(API_URL, timeout=10)
-        return resp.json().get("items", [])
+        resp = requests.get(f"{API_BASE_URL}/api/v1/health", timeout=5)
+        resp.raise_for_status()
+        return resp.json()
     except Exception as exc:
-        print(f"[ERROR] {exc}")
-        return []
-
-if __name__ == "__main__":
-    print(fetch_data())
-'''
-
-MOCK_FIXED_CODE = '''"""Self-healed — stdlib urllib rewrite (Debugger Agent)."""
-import json
-import urllib.request
-import urllib.error
-
-API_URL = "https://api.example.com/data"
+        return {
+            "postgres": {"status": "error", "label": f"API unreachable: {exc}"},
+            "gemini_ok": False,
+            "hf_ok": False,
+            "using_fallback": True,
+            "telemetry": {"cpu_pct": 0, "ram_pct": 0, "total_tokens": 0, "latency_ms": 0},
+        }
 
 
-def fetch_data():
-    req = urllib.request.Request(
-        API_URL,
-        headers={"Accept": "application/json", "User-Agent": "DevinBrother/1.0"},
-    )
+def _create_session() -> str:
+    """POST /api/v1/session/new — returns a backend-generated thread_id."""
     try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            payload = json.loads(resp.read().decode("utf-8"))
-    except urllib.error.URLError as exc:
-        print(f"[WARN] Sandbox network blocked: {exc}")
-        payload = {"items": [{"id": 1, "name": "mock-item", "status": "ok"}]}
-    items = payload.get("items")
-    if items is None:
-        print("[INFO] Missing 'items' key — safe default applied.")
-        return []
-    return items
+        resp = requests.post(f"{API_BASE_URL}/api/v1/session/new", timeout=5)
+        resp.raise_for_status()
+        return resp.json().get("thread_id", str(uuid.uuid4()))
+    except Exception:
+        return str(uuid.uuid4())
 
 
-if __name__ == "__main__":
-    rows = fetch_data()
-    print(f"✓ Retrieved {len(rows)} record(s) via urllib (no pip deps)")
-    for row in rows:
-        print(f"  → {row}")
-'''
-
-SIMULATION_STEPS: list[tuple[str, str, Optional[str]]] = [
-    (
-        "[Router] Intent classified: coding → Planner → Coder → Validator → Docker Sandbox",
-        "",
-        None,
-    ),
-    ("[Planner] Mission brief accepted → target: mock_api_client.py", "", None),
-    ("[Coder] Gemini draft synthesized (uses `requests`, no try/except)", MOCK_PRE_VALIDATOR_CODE, None),
-    (
-        "[Validator] REJECTED — code blocked before sandbox:\n"
-        "[Validator]   ✗ Missing error handling: add try/except blocks around I/O and external calls.\n"
-        "[Validator] Routing back to Coder for rewrite (self-reflection loop).",
-        "",
-        None,
-    ),
-    (
-        "[Coder] Incorporating Validator self-reflection feedback…\n"
-        "[Coder] Rewrite: added try/except guards (still uses requests)",
-        MOCK_BROKEN_CODE,
-        None,
-    ),
-    ("[Validator] PASSED — code cleared for Docker sandbox.", "", None),
-    (
-        "[Terminal] Docker sandbox run FAILED\n"
-        "ModuleNotFoundError: No module named 'requests'",
-        MOCK_BROKEN_CODE,
-        None,
-    ),
-    (
-        "[Debugger] Autonomous repair: requests → urllib.request + json\n"
-        "[Debugger] detected_errors flushed before re-route",
-        MOCK_FIXED_CODE,
-        None,
-    ),
-    (
-        "[Terminal] Docker sandbox re-run PASSED\n"
-        "✓ Retrieved 1 record(s) via urllib (no pip deps)\n"
-        "  → {'id': 1, 'name': 'mock-item', 'status': 'ok'}\n"
-        "[System] ✓ Verification PASSED — portfolio recording ready.",
-        MOCK_FIXED_CODE,
-        "Passed",
-    ),
-]
+def _default_telemetry() -> Dict[str, Any]:
+    """Local fallback telemetry defaults for session state init."""
+    return {"total_tokens": 0, "latency_ms": 0, "cpu_pct": 0.0, "ram_pct": 0.0, "resource_index": 0.0}
 
 
+# ─── SESSION STATE ──────────────────────────────────────────────────────────────
 def _init_session() -> None:
     defaults = {
         "dashboard_state": None,
         "console_logs": "",
-        "metrics": {
-            "agent_health": "Standby",
-            "sandbox": "Secure",
-            "status": "—",
-        },
         "pipeline_error": None,
         "last_run_ok": False,
-        "simulation_mode": False,
-        "telemetry": default_telemetry(),
+        "telemetry": _default_telemetry(),
+        "thread_id": str(uuid.uuid4()),
+        "active_file": "main.py",
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -272,332 +266,558 @@ def _append_console(line: str) -> str:
 
 
 def _get_telemetry() -> dict:
-    return dict(st.session_state.get("telemetry") or default_telemetry())
+    return dict(st.session_state.get("telemetry") or _default_telemetry())
 
 
-def _render_live_telemetry(*, container: Optional[Any] = None) -> None:
-    """System metadata panel: tokens, infra latency, CPU/RAM resource index."""
+# ─── RENDER HELPERS ─────────────────────────────────────────────────────────────
+def _render_telemetry_sidebar(container: Any) -> None:
     tel = _get_telemetry()
     tokens = int(tel.get("total_tokens", 0))
     latency = int(tel.get("latency_ms", 0))
-    resource_idx = float(tel.get("resource_index", 0.0))
     cpu = float(tel.get("cpu_pct", 0.0))
     ram = float(tel.get("ram_pct", 0.0))
-    mode = "SIM" if st.session_state.get("simulation_mode") else "LIVE"
+
     html = f"""
-    <div class="dyb-telemetry">
-        <div class="dyb-telemetry-title">Live Session Telemetry · {mode}</div>
-        <div class="dyb-telemetry-grid">
-            <div class="dyb-telemetry-card">
-                <div class="dyb-telemetry-label">Total Tokens Processed</div>
-                <div class="dyb-telemetry-value">{tokens:,}</div>
-                <div class="dyb-telemetry-sub">Cumulative agent + buffer throughput</div>
-            </div>
-            <div class="dyb-telemetry-card">
-                <div class="dyb-telemetry-label">Active Infrastructure Latency</div>
-                <div class="dyb-telemetry-value">{latency} ms</div>
-                <div class="dyb-telemetry-sub">Sandbox + routing round-trip</div>
-            </div>
-            <div class="dyb-telemetry-card">
-                <div class="dyb-telemetry-label">Agent Resource Usage Index</div>
-                <div class="dyb-telemetry-value">{resource_idx}</div>
-                <div class="dyb-telemetry-sub">CPU {cpu:.1f}% · RAM {ram:.1f}% (sim)</div>
-            </div>
-        </div>
+    <div class="tel-card-sidebar">
+        <div class="tel-label">Tokens Throughput</div>
+        <div class="tel-value">{tokens:,}</div>
+        <div class="tel-sub">Cumulative tokens generated</div>
+    </div>
+    <div class="tel-card-sidebar">
+        <div class="tel-label">Latency Delta</div>
+        <div class="tel-value">{latency} ms</div>
+        <div class="tel-sub">Step execution wall-clock</div>
+    </div>
+    <div class="tel-card-sidebar">
+        <div class="tel-label">CPU Usage</div>
+        <div class="tel-value">{cpu:.1f}%</div>
+        <div class="tel-sub">Backend host CPU</div>
+    </div>
+    <div class="tel-card-sidebar">
+        <div class="tel-label">RAM Usage</div>
+        <div class="tel-value">{ram:.1f}%</div>
+        <div class="tel-sub">Backend host memory</div>
     </div>
     """
-    if container is not None:
-        container.markdown(html, unsafe_allow_html=True)
-    else:
-        st.markdown(html, unsafe_allow_html=True)
+    container.markdown(html, unsafe_allow_html=True)
 
 
-def _render_console_text(text: str, *, container: Optional[Any] = None) -> None:
+def _render_terminal(text: str, *, container: Optional[Any] = None) -> None:
     safe = (
         text.replace("&", "&amp;")
         .replace("<", "&lt;")
         .replace(">", "&gt;")
     )
-    html = f'<div class="dyb-terminal">{safe}</div>'
+    html = f'<div class="ide-terminal">{safe}</div>'
     if container is not None:
         container.markdown(html, unsafe_allow_html=True)
     else:
         st.markdown(html, unsafe_allow_html=True)
 
 
-def run_portfolio_simulation_mode(
-    user_prompt: str,
+def _render_code_editor(code: str, *, container: Optional[Any] = None, readonly: bool = False) -> None:
+    """Render the Ace code editor with syntax highlighting."""
+    target = container if container is not None else st
+    if code and code.strip():
+        target.empty()
+        with target.container():
+            active_file = st.session_state.get('active_file', 'main.py')
+            editor_key = f"ace_editor_{active_file}_{uuid.uuid4().hex[:8]}" if readonly else f"ace_editor_{active_file}_stable"
+            updated_code = st_ace(
+                value=code,
+                language="python",
+                theme="monokai",
+                font_size=13,
+                show_gutter=True,
+                show_print_margin=False,
+                wrap=True,
+                auto_update=True,
+                readonly=readonly,
+                min_lines=28,
+                max_lines=42,
+                key=editor_key,
+            )
+            # If the user edited the code, save it back
+            if not readonly and updated_code != code:
+                active_file = st.session_state.get("active_file", "main.py")
+                state = st.session_state.get("dashboard_state")
+                if state and isinstance(state, dict):
+                    if "workspace_files" not in state:
+                        state["workspace_files"] = {}
+                    state["workspace_files"][active_file] = updated_code
+                    state["code_buffer"] = updated_code
+                st.rerun()
+    else:
+        target.markdown(
+            '<div class="code-empty">// Awaiting generated code from Coder agent…</div>',
+            unsafe_allow_html=True,
+        )
+
+
+def _render_file_tabs(workspace_files: Dict[str, str], active_file: str, *, container: Optional[Any] = None) -> None:
+    """Render clickable file tabs above the editor."""
+    if not workspace_files:
+        return
+    tabs_html = '<div class="file-tabs">'
+    for fname in sorted(workspace_files.keys()):
+        cls = "file-tab file-tab-active" if fname == active_file else "file-tab"
+        tabs_html += f'<div class="{cls}">{fname}</div>'
+    tabs_html += '</div>'
+    target = container if container is not None else st
+    target.markdown(tabs_html, unsafe_allow_html=True)
+
+
+# ─── SSE PIPELINE EXECUTION ────────────────────────────────────────────────────
+def _parse_sse_line(line: str) -> Optional[Dict[str, str]]:
+    """Parse a single SSE line into {event, data} or None."""
+    line = line.strip()
+    if line.startswith("event:"):
+        return {"event": line[len("event:"):].strip()}
+    if line.startswith("data:"):
+        return {"data": line[len("data:"):].strip()}
+    return None
+
+
+def _stream_from_api(
+    prompt: str,
+    thread_id: str,
+    recursion_limit: int,
     *,
-    terminal_slot: Optional[Any] = None,
-    code_slot: Optional[Any] = None,
-    telemetry_slot: Optional[Any] = None,
-) -> None:
-    """Sequential demo: Router → Planner → Coder → Validator → Sandbox → Debugger → Success."""
-    st.session_state["simulation_mode"] = True
-    st.session_state["telemetry"] = default_telemetry()
-    st.session_state["dashboard_state"] = {
-        "user_prompt": user_prompt.strip(),
-        "planner_suggestion": "mock_api_client.py — HTTP + JSON + missing-key guard",
-        "code_buffer": "",
-        "terminal_output": "",
-        "detected_errors": [],
-        "is_verified": False,
-        "pipeline_logs": [],
-        "llm_provider": "portfolio-simulation",
-        "used_hf_failover": False,
-        "conversation_history": [{"role": "user", "content": user_prompt.strip()}],
-        "intent": "coding",
-        "validation_passed": True,
+    terminal_slot: Any,
+    code_slot: Any,
+    telemetry_slot: Any,
+    file_tabs_slot: Any,
+) -> Dict[str, Any]:
+    """POST to /api/v1/execute and consume SSE events, rendering updates live."""
+
+    _append_console("[System] LangGraph stream started · Live Production Mode")
+    _render_terminal(st.session_state["console_logs"], container=terminal_slot)
+
+    payload = {
+        "prompt": prompt,
+        "thread_id": thread_id,
+        "recursion_limit": recursion_limit,
     }
 
-    for step_idx, (log_line, code, final_status) in enumerate(SIMULATION_STEPS):
-        _append_console(log_line)
-        st.session_state["telemetry"] = tick_telemetry(
-            _get_telemetry(),
-            log_line=log_line,
-            code=code or "",
-            step_index=step_idx,
-            final=final_status == "Passed",
-        )
-        st.session_state["dashboard_state"]["code_buffer"] = code or ""
-        if "FAILED" in log_line:
-            st.session_state["metrics"] = {
-                "agent_health": "Recovering",
-                "sandbox": "Secure",
-                "status": "Running",
-            }
-        elif final_status == "Passed":
-            st.session_state["dashboard_state"]["is_verified"] = True
-            st.session_state["metrics"] = {
-                "agent_health": "Operational",
-                "sandbox": "Secure",
-                "status": "Passed",
-            }
-        else:
-            st.session_state["metrics"] = {
-                "agent_health": "Recovering",
-                "sandbox": "Secure",
-                "status": "Running",
-            }
+    final_state: Dict[str, Any] = {}
 
-        if telemetry_slot is not None:
-            _render_live_telemetry(container=telemetry_slot)
-        if terminal_slot is not None:
-            _render_console_text(st.session_state["console_logs"], container=terminal_slot)
-        if code_slot is not None and code:
-            code_slot.code(code, language="python", line_numbers=True)
+    try:
+        with requests.post(
+            f"{API_BASE_URL}/api/v1/execute",
+            json=payload,
+            stream=True,
+            timeout=300,
+        ) as resp:
+            resp.raise_for_status()
 
-        time.sleep(SIM_STEP_SECONDS)
+            current_event = ""
+            data_buffer = ""
 
-    st.session_state["dashboard_state"]["terminal_output"] = st.session_state["console_logs"]
-    st.session_state["pipeline_error"] = None
-    st.session_state["last_run_ok"] = True
+            for raw_line in resp.iter_lines(decode_unicode=True):
+                if raw_line is None:
+                    continue
+                line = raw_line.strip()
+
+                # SSE blank line = end of event
+                if not line:
+                    if current_event and data_buffer:
+                        try:
+                            data = json.loads(data_buffer)
+                        except json.JSONDecodeError:
+                            data = {}
+
+                        if current_event == "node_update":
+                            # Render transition line
+                            transition = data.get("transition", "")
+                            if transition:
+                                _append_console(transition)
+
+                            # Render new pipeline logs
+                            for log_line in data.get("new_logs", []):
+                                _append_console(str(log_line))
+
+                            # Render terminal output delta
+                            term_delta = data.get("terminal_output_delta", "")
+                            if term_delta:
+                                _append_console(term_delta)
+
+                            # Update telemetry
+                            tel = data.get("telemetry")
+                            if tel:
+                                st.session_state["telemetry"] = tel
+
+                            # Update code editor
+                            workspace = data.get("workspace_files") or {}
+                            active = data.get("active_file") or st.session_state.get("active_file", "main.py")
+                            code = data.get("code_buffer") or ""
+                            _render_file_tabs(workspace, active, container=file_tabs_slot)
+                            _render_code_editor(code, container=code_slot, readonly=True)
+
+                            # Render updated telemetry + terminal
+                            _render_telemetry_sidebar(container=telemetry_slot)
+                            _render_terminal(st.session_state["console_logs"], container=terminal_slot)
+
+                        elif current_event == "complete":
+                            final_state = data
+                            tel = data.get("telemetry")
+                            if tel:
+                                st.session_state["telemetry"] = tel
+
+                        elif current_event == "error":
+                            error_msg = data.get("error", "Unknown API error")
+                            _append_console(f"[System] Pipeline error: {error_msg}")
+                            _render_terminal(st.session_state["console_logs"], container=terminal_slot)
+                            return {
+                                "detected_errors": [error_msg],
+                                "is_verified": False,
+                            }
+
+                    current_event = ""
+                    data_buffer = ""
+                    continue
+
+                if line.startswith("event:"):
+                    current_event = line[len("event:"):].strip()
+                elif line.startswith("data:"):
+                    data_buffer += line[len("data:"):].strip()
+
+    except requests.exceptions.ConnectionError:
+        error_msg = f"Cannot connect to API at {API_BASE_URL}. Is the FastAPI server running?"
+        _append_console(f"[System] {error_msg}")
+        _render_terminal(st.session_state["console_logs"], container=terminal_slot)
+        return {"detected_errors": [error_msg], "is_verified": False}
+    except requests.exceptions.Timeout:
+        error_msg = "API request timed out (300s limit)."
+        _append_console(f"[System] {error_msg}")
+        _render_terminal(st.session_state["console_logs"], container=terminal_slot)
+        return {"detected_errors": [error_msg], "is_verified": False}
+    except Exception as exc:
+        error_msg = f"API communication error: {exc}"
+        _append_console(f"[System] {error_msg}")
+        _render_terminal(st.session_state["console_logs"], container=terminal_slot)
+        return {"detected_errors": [str(exc)], "is_verified": False}
+
+    return final_state
 
 
-def _hf_failover_ready() -> bool:
-    return bool(os.getenv("HUGGINGFACEHUB_API_TOKEN"))
-
-
-def _get_metrics() -> Tuple[str, str, str]:
-    metrics = st.session_state.get("metrics") or {}
-    if metrics:
-        return (
-            metrics.get("agent_health", "Standby"),
-            metrics.get("sandbox", "Secure"),
-            metrics.get("status", "—"),
-        )
-    state = st.session_state.get("dashboard_state")
-    if not state:
-        return "Standby", "Secure", "—"
-    verified = bool(state.get("is_verified"))
-    errors = state.get("detected_errors") or []
-    if verified and not errors:
-        return "Operational", "Secure", "Passed"
-    if errors:
-        return "Recovering", "Secure", "Failed"
-    return "Idle", "Secure", "Failed"
-
-
+# ─── INITIALIZE ─────────────────────────────────────────────────────────────────
 _init_session()
 
+# Fetch backend health for status panel (cached per page load)
+_health = _fetch_health()
+
+# ─── SIDEBAR ────────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown("## ⚡ Control Center")
-    st.caption("Devin's Younger Brother · Query Solver · Router + Memory + Validator")
-
-    user_prompt = st.text_area(
-        "User Prompt",
-        value=DEFAULT_PROMPT,
-        height=220,
-        label_visibility="collapsed",
-    )
-
-    recursion_limit = st.slider(
-        "LangGraph recursion_limit",
-        min_value=10,
-        max_value=50,
-        value=PIPELINE_CONFIG_DEFAULT["recursion_limit"],
-        step=5,
-    )
-
-    execute_clicked = st.button(
-        "🚀 Execute Autonomous Pipeline",
-        type="primary",
-        use_container_width=True,
-    )
-
-    st.markdown("---")
-    gemini_ok = bool(os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY"))
-    hf_ok = _hf_failover_ready()
-    st.markdown(
-        f"**Gemini API:** {'🟢 Loaded' if gemini_ok else '🔴 Missing'}  \n"
-        f"**HF Hub Token:** {'🟢 Loaded' if hf_ok else '🔴 Missing'}  \n"
-        f"**Mode:** High-Fidelity Portfolio Simulation  \n"
-        f"**Fallback:** Dynamic HuggingFace Hub Failover Mode Active 🟢"
-        if hf_ok
-        else "**Fallback:** HuggingFace token missing — simulation mode only 🔴",
-    )
-
-st.markdown(
-    """
-    <div class="dyb-header">
-        <p class="dyb-title">Devin's Younger Brother</p>
-        <p class="dyb-subtitle">Portfolio simulation bypass · uninterrupted screen recording</p>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
-
-if execute_clicked:
-    if not user_prompt.strip():
-        st.warning("Please enter a user prompt before executing the pipeline.")
-    else:
-        # 1. Instantly clear frozen logs and show fresh startup state
-        st.session_state["console_logs"] = (
-            "🚀 Initialization sequence started...\n"
-            "[System] Checking Python 3.9 Environment Patches..."
-        )
-        st.session_state["telemetry"] = tick_telemetry(
-            default_telemetry(),
-            log_line=st.session_state["console_logs"],
-            step_index=0,
-        )
-        st.session_state["metrics"] = {
-            "agent_health": "Recovering",
-            "sandbox": "Secure",
-            "status": "Running",
-        }
-        st.session_state["dashboard_state"] = None
-        st.session_state["pipeline_error"] = None
-        st.session_state["last_run_ok"] = False
-        st.session_state["simulation_mode"] = False
-        st.session_state["telemetry"] = default_telemetry()
-
-        banner_slot = st.empty()
-        banner_slot.markdown(
-            '<div class="dyb-banner-warn"><strong>⚡ Pipeline Running</strong> — Portfolio simulation engaged.</div>',
-            unsafe_allow_html=True,
-        )
-
-        telemetry_slot = st.empty()
-        _render_live_telemetry(container=telemetry_slot)
-
-        col_code_live, col_term_live = st.columns(2, gap="large")
-        with col_code_live:
-            st.markdown('<div class="dyb-panel-header">💻 Code Workspace</div>', unsafe_allow_html=True)
-            code_slot = col_code_live.empty()
-        with col_term_live:
-            st.markdown('<div class="dyb-panel-header">📟 Live Sandbox Console</div>', unsafe_allow_html=True)
-            terminal_slot = col_term_live.empty()
-            _render_console_text(st.session_state["console_logs"], container=terminal_slot)
-
-        try:
-            # Force bypass: LangGraph invoke disabled to prevent ADC/metadata deadlocks
-            raise ValueError(
-                "Force-Triggering High-Fidelity Portfolio Simulation Mode to bypass framework ADC metadata locks."
-            )
-
-            # config = {"recursion_limit": int(recursion_limit)}
-            # from src.core.graph import app as agent_graph
-            # result = agent_graph.invoke(initial_state, config=config)
-
-        except Exception as e:
-            print(f"[System Override] Redirecting execution pipeline flow: {str(e)}")
-            _append_console(f"[System Override] {e}")
-            _render_console_text(st.session_state["console_logs"], container=terminal_slot)
-
-            run_portfolio_simulation_mode(
-                user_prompt,
-                terminal_slot=terminal_slot,
-                code_slot=code_slot,
-                telemetry_slot=telemetry_slot,
-            )
-
-        banner_slot.markdown(
-            """
-            <div class="dyb-banner-ok">
-            <strong>✓ Portfolio Simulation Complete</strong>
-            Router → Planner → Coder → Validator → Sandbox → Debugger → Verified
-            <span class="dyb-pill dyb-pill-live">RECORDING READY</span>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-state = st.session_state.get("dashboard_state")
-
-if st.session_state.get("simulation_mode") and st.session_state.get("last_run_ok"):
     st.markdown(
         """
-        <div class="dyb-banner-ok">
-        <strong>✓ High-Fidelity Simulation Active</strong> — LangGraph bypass enabled for flawless demo capture.
-        <span class="dyb-pill dyb-pill-live">SIM</span>
+        <div style="padding: 0.25rem 0 0.75rem;">
+            <p class="ide-title" style="font-size:1.3rem; margin:0;">⚡ Control Center</p>
+            <p style="color: var(--text-muted); font-size: 0.72rem; margin-top: 0.15rem;">
+                Devin's Younger Brother · Pro IDE
+            </p>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-if state and not st.session_state.get("simulation_mode"):
-    st.session_state["telemetry"] = telemetry_from_state(state)
+    with st.form("pipeline_form", clear_on_submit=False, border=False):
+        user_prompt = st.text_area(
+            "User Prompt",
+            value=st.session_state.get("last_user_prompt", DEFAULT_PROMPT),
+            height=200,
+            label_visibility="collapsed",
+            key="user_prompt_input",
+        )
 
-_render_live_telemetry()
+        recursion_limit = st.slider(
+            "LangGraph recursion_limit",
+            min_value=10,
+            max_value=50,
+            value=DEFAULT_RECURSION_LIMIT,
+            step=5,
+        )
 
-col_code, col_terminal = st.columns(2, gap="large")
+        execute_clicked = st.form_submit_button(
+            "🚀 Execute Pipeline",
+            type="primary",
+            use_container_width=True,
+        )
 
-with col_code:
-    st.markdown('<div class="dyb-panel-header">💻 Code Workspace</div>', unsafe_allow_html=True)
-    code_buffer = (state or {}).get("code_buffer", "")
-    if code_buffer and code_buffer.strip():
-        st.code(code_buffer, language="python", line_numbers=True)
+    if st.button("🔄 New Session", use_container_width=True):
+        st.session_state["thread_id"] = _create_session()
+        st.session_state["dashboard_state"] = None
+        st.session_state["console_logs"] = ""
+        st.session_state["pipeline_error"] = None
+        st.session_state["last_run_ok"] = False
+        st.session_state["last_user_prompt"] = DEFAULT_PROMPT
+        st.session_state["telemetry"] = _default_telemetry()
+        st.session_state["active_file"] = "main.py"
+        st.rerun()
+
+    st.markdown("---")
+
+    # ── System Status (from API health endpoint) ──
+    gemini_ok = _health.get("gemini_ok", False)
+    hf_ok = _health.get("hf_ok", False)
+    api_reachable = _health.get("postgres", {}).get("status") != "error" or "API unreachable" not in _health.get("postgres", {}).get("label", "")
+
+    st.markdown(
+        f"""
+        <div class="sidebar-section">
+            <div class="sidebar-section-title">API Connections</div>
+            <div style="font-size: 0.78rem; line-height: 1.8;">
+                <span class="status-dot dot-{'green' if api_reachable else 'red'}"></span>
+                Backend API: <strong>{'Connected' if api_reachable else 'Unreachable'}</strong><br>
+                <span class="status-dot dot-{'green' if gemini_ok else 'red'}"></span>
+                Gemini API: <strong>{'Loaded' if gemini_ok else 'Missing'}</strong><br>
+                <span class="status-dot dot-{'green' if hf_ok else 'red'}"></span>
+                HF Failover: <strong>{'Active' if hf_ok else 'Missing'}</strong><br>
+                <span style="color: var(--text-dim);">Mode:</span>
+                <strong style="color: var(--accent-emerald);">Live Production</strong><br>
+                <span style="color: var(--text-dim);">Thread:</span>
+                <code style="font-size: 0.68rem;">{st.session_state['thread_id'][:12]}…</code>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+# ─── MAIN IDE LAYOUT ───────────────────────────────────────────────────────────
+st.markdown(
+    """
+    <div class="ide-header">
+        <p class="ide-title">Devin's Younger Brother</p>
+        <div class="ide-mode-badge">
+            <div class="ide-mode-dot"></div>
+            LIVE PRODUCTION
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+banner_slot = st.empty()
+
+# 3-Pane IDE Layout: Status | Editor | Terminal
+col_status, col_editor, col_terminal = st.columns([2, 5, 3], gap="medium")
+
+# 1. Left (20%): Telemetry, Postgres status, file selector
+with col_status:
+    st.markdown(
+        '<div class="panel-header"><span class="panel-header-icon">📊</span> Telemetry & Status</div>',
+        unsafe_allow_html=True,
+    )
+
+    # Postgres status card (from health API)
+    pg_health = _health.get("postgres", {"status": "disconnected", "label": "Unknown"})
+    pg_status = pg_health.get("status", "disconnected")
+    pg_label = pg_health.get("label", "Unknown")
+
+    if pg_status == "connected":
+        pg_icon, pg_color = "🟢", "green"
+    elif pg_status == "fallback":
+        pg_icon, pg_color = "🟡", "yellow"
     else:
-        st.markdown(
-            '<div class="dyb-code-empty">// No active buffer — Execute pipeline to begin</div>',
+        pg_icon, pg_color = "🔴", "red"
+
+    st.markdown(
+        f"""
+        <div class="sidebar-section">
+            <div class="sidebar-section-title">Database Status</div>
+            <div style="font-size: 0.8rem; line-height: 1.8;">
+                <span class="status-dot dot-{pg_color}"></span>
+                Postgres: <strong>{pg_icon} {pg_label}</strong>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # Live Telemetry Slot
+    # Seed from health API telemetry on initial load
+    if not st.session_state.get("dashboard_state"):
+        health_tel = _health.get("telemetry", {})
+        if health_tel:
+            current_tel = _get_telemetry()
+            current_tel["cpu_pct"] = health_tel.get("cpu_pct", current_tel.get("cpu_pct", 0))
+            current_tel["ram_pct"] = health_tel.get("ram_pct", current_tel.get("ram_pct", 0))
+            st.session_state["telemetry"] = current_tel
+
+    status_telemetry_slot = st.empty()
+    _render_telemetry_sidebar(status_telemetry_slot)
+
+    # Multi-file Selector
+    st.markdown(
+        '<div class="panel-header" style="margin-top: 0.75rem;"><span class="panel-header-icon">📁</span> Workspace Files</div>',
+        unsafe_allow_html=True,
+    )
+
+    state = st.session_state.get("dashboard_state")
+    workspace = (state or {}).get("workspace_files") or {}
+    active = st.session_state.get("active_file", "main.py")
+
+    file_names = sorted(workspace.keys()) if workspace else ["main.py"]
+    if active not in file_names:
+        active = file_names[0]
+
+    # File selector dropdown
+    selected_file = st.selectbox(
+        "Active File Dropdown",
+        file_names,
+        index=file_names.index(active) if active in file_names else 0,
+        label_visibility="collapsed",
+        key="file_selector_dropdown",
+    )
+    if selected_file != active:
+        st.session_state["active_file"] = selected_file
+        st.rerun()
+
+    # Visual list explorer of files
+    file_list_slot = st.empty()
+    if workspace:
+        file_list_html = '<div class="sidebar-section" style="margin-top: 0.5rem;">'
+        for fname in file_names:
+            icon = "🐍" if fname.endswith(".py") else "📄"
+            weight = "600" if fname == active else "400"
+            color = "var(--accent-cyan)" if fname == active else "var(--text-muted)"
+            file_list_html += f'<div style="font-size: 0.75rem; padding: 0.2rem 0; color: {color}; font-weight: {weight};">{icon} {fname}</div>'
+        file_list_html += '</div>'
+        file_list_slot.markdown(file_list_html, unsafe_allow_html=True)
+    else:
+        file_list_slot.markdown(
+            '<div style="font-size: 0.75rem; color: var(--text-dim); padding: 0.5rem;">No files generated yet</div>',
             unsafe_allow_html=True,
         )
 
+# 2. Center (50%): Monaco-style st_ace editor
+with col_editor:
+    st.markdown(
+        '<div class="panel-header"><span class="panel-header-icon">💻</span> Code Workspace</div>',
+        unsafe_allow_html=True,
+    )
+    file_tabs_slot = st.empty()
+    code_slot = st.empty()
+
+# 3. Right (30%): Live Terminal (true black, Consolas, light green text)
 with col_terminal:
-    st.markdown('<div class="dyb-panel-header">📟 Live Sandbox Console</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="panel-header"><span class="panel-header-icon">📟</span> Live Terminal</div>',
+        unsafe_allow_html=True,
+    )
+    terminal_slot = st.empty()
+
+
+# ─── EXECUTION ROUTING ─────────────────────────────────────────────────────────
+if execute_clicked:
+    prompt_text = (user_prompt or "").strip()
+    st.session_state["last_user_prompt"] = prompt_text
+
+    if not prompt_text:
+        st.warning("Please enter a user prompt before executing the pipeline.")
+    else:
+        st.session_state["dashboard_state"] = None
+        st.session_state["console_logs"] = (
+            "🚀 Pipeline starting…\n"
+            f"[System] user_prompt accepted ({len(prompt_text)} chars)\n"
+            f"[System] prompt preview: {prompt_text[:120]}{'…' if len(prompt_text) > 120 else ''}\n"
+            f"[System] thread_id={st.session_state['thread_id']}\n"
+            f"[System] Mode: Live Production · API: {API_BASE_URL}"
+        )
+        st.session_state["telemetry"] = _default_telemetry()
+        st.session_state["pipeline_error"] = None
+        st.session_state["last_run_ok"] = False
+
+        banner_slot.markdown(
+            '<div class="banner-warn"><strong>⚡ Pipeline Running</strong> — LangGraph streaming via API.</div>',
+            unsafe_allow_html=True,
+        )
+        _render_telemetry_sidebar(status_telemetry_slot)
+        _render_terminal(st.session_state["console_logs"], container=terminal_slot)
+        _render_code_editor("", container=code_slot, readonly=True)
+
+        try:
+            final_state = _stream_from_api(
+                prompt_text,
+                st.session_state["thread_id"],
+                recursion_limit,
+                terminal_slot=terminal_slot,
+                code_slot=code_slot,
+                telemetry_slot=status_telemetry_slot,
+                file_tabs_slot=file_tabs_slot,
+            )
+            st.session_state["dashboard_state"] = final_state
+            st.session_state["last_run_ok"] = True
+            st.session_state["pipeline_error"] = None
+
+            verified = bool(final_state.get("is_verified"))
+            intent = final_state.get("intent", "—")
+
+            # Update active file in session state
+            if final_state.get("active_file"):
+                st.session_state["active_file"] = final_state["active_file"]
+
+            banner_slot.markdown(
+                f"""
+                <div class="banner-ok">
+                <strong>✓ Pipeline Complete</strong>
+                intent={intent} · verified={'yes' if verified else 'no'}
+                <div class="ide-mode-badge" style="display: inline-flex; margin-left: 0.5rem;">
+                    <div class="ide-mode-dot"></div> LIVE
+                </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            st.rerun()
+        except Exception as exc:
+            st.session_state["pipeline_error"] = str(exc)
+            st.session_state["last_run_ok"] = False
+            _append_console(f"[System] Pipeline error: {exc}")
+            _render_terminal(st.session_state["console_logs"], container=terminal_slot)
+            banner_slot.markdown(
+                f"""
+                <div class="banner-error">
+                <strong>✗ Pipeline Failed</strong> — {exc}
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+else:
+    # Render historical or standby data
+    state = st.session_state.get("dashboard_state")
+    if state and isinstance(state, dict):
+        tel = state.get("telemetry")
+        if tel:
+            st.session_state["telemetry"] = tel
+
+    _render_telemetry_sidebar(status_telemetry_slot)
+
+    # Render workspace files
+    workspace = (state or {}).get("workspace_files") or {}
+    active = st.session_state.get("active_file", "main.py")
+
+    if workspace:
+        _render_file_tabs(workspace, active, container=file_tabs_slot)
+        code = workspace.get(active, "")
+    else:
+        code = (state or {}).get("code_buffer", "")
+
+    _render_code_editor(code, container=code_slot, readonly=False)
+
     logs = st.session_state.get("console_logs", "")
     if logs.strip():
-        _render_console_text(logs)
+        _render_terminal(logs, container=terminal_slot)
     elif state:
         term = (state.get("terminal_output") or "").strip()
         logs_list = state.get("pipeline_logs") or []
         combined = "\n".join(logs_list + ([term] if term else []))
-        _render_console_text(combined if combined else "Awaiting pipeline execution…")
+        _render_terminal(combined if combined else "Awaiting pipeline execution…", container=terminal_slot)
     else:
-        _render_console_text("Awaiting pipeline execution…")
+        _render_terminal("Awaiting pipeline execution…", container=terminal_slot)
 
-st.markdown("---")
-st.markdown("### 📊 System Metrics")
-health, docker_status, verification = _get_metrics()
-m1, m2, m3 = st.columns(3)
-with m1:
-    st.metric("Agent Health", health)
-with m2:
-    st.metric("Docker Sandbox Isolation", docker_status)
-with m3:
-    st.metric(
-        "Verification Status",
-        verification,
-        delta="Verified" if verification == "Passed" else "Needs debugger",
+if st.session_state.get("pipeline_error"):
+    st.markdown(
+        f'<div class="banner-error"><strong>Last error:</strong> {st.session_state["pipeline_error"]}</div>',
+        unsafe_allow_html=True,
     )

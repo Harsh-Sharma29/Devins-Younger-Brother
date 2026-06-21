@@ -20,7 +20,7 @@ IntentType = Literal["coding", "research", "generic"]
 class DevinBrotherState(BaseModel):
 	user_prompt: str = Field(default="", description="The original user prompt")
 	planner_suggestion: str = Field(default="", description="Planner output / file plan")
-	code_buffer: str = Field(default="", description="The generated code")
+	code_buffer: str = Field(default="", description="The active file's code content")
 	terminal_output: str = Field(default="", description="Output from execution or LLM answer")
 	detected_errors: List[str] = Field(default_factory=list, description="List of detected errors")
 	is_verified: bool = Field(default=False, description="Flag indicating if the code is verified")
@@ -37,6 +37,11 @@ class DevinBrotherState(BaseModel):
 	validation_passed: bool = Field(default=False, description="Validator QA gate status")
 	validator_feedback: List[str] = Field(default_factory=list, description="Last validator rejections")
 	validator_attempts: int = Field(default=0, description="Coder↔Validator rewrite cycles")
+	workspace_files: Dict[str, str] = Field(
+		default_factory=dict,
+		description="Multi-file workspace: filename → code content",
+	)
+	active_file: str = Field(default="main.py", description="Currently displayed file in editor")
 
 
 def get_initial_state(
@@ -60,6 +65,8 @@ def get_initial_state(
 		"validation_passed": False,
 		"validator_feedback": [],
 		"validator_attempts": 0,
+		"workspace_files": {},
+		"active_file": "main.py",
 	}
 
 
@@ -212,4 +219,9 @@ workflow.add_edge("debugger_agent", "terminal_agent")
 workflow.add_edge("research_agent", END)
 workflow.add_edge("knowledge_agent", END)
 
-app = workflow.compile()
+
+def compile_workflow(checkpointer: Optional[Any] = None) -> Any:
+	"""Compile the StateGraph; inject PostgresSaver for durable multi-turn sessions."""
+	if checkpointer is not None:
+		return workflow.compile(checkpointer=checkpointer)
+	return workflow.compile()
