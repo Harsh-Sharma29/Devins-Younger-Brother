@@ -36,6 +36,7 @@ from src.core.telemetry import (
     tick_telemetry,
     telemetry_from_state,
 )
+from src.tools.web_search import tavily_configured
 
 import os
 
@@ -91,6 +92,7 @@ class HealthResponse(BaseModel):
     postgres: Dict[str, str]
     gemini_ok: bool
     hf_ok: bool
+    tavily_ok: bool
     using_fallback: bool
     telemetry: Dict[str, Any]
 
@@ -164,6 +166,7 @@ async def health():
         postgres=pg,
         gemini_ok=bool(os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")),
         hf_ok=bool(os.getenv("HUGGINGFACEHUB_API_TOKEN")),
+        tavily_ok=tavily_configured(),
         using_fallback=is_using_fallback(),
         telemetry={
             "cpu_pct": round(tel.get("cpu_pct", 0.0), 1),

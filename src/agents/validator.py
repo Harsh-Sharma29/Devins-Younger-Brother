@@ -4,6 +4,7 @@ Self-reflection validator — static QA before Docker sandbox execution.
 
 from __future__ import annotations
 
+import ast
 import re
 from typing import Any, Dict, List, Tuple
 
@@ -31,8 +32,74 @@ _API_KEY_PATTERNS = [
 ]
 
 
-def _has_try_except(code: str) -> bool:
-    return bool(re.search(r"\btry\s*:", code)) and bool(re.search(r"\bexcept\b", code))
+def _validate_network_calls_in_try(code: str) -> List[str]:
+    """Check if network calls are wrapped in a try/except block using AST."""
+    reasons = []
+    try:
+        tree = ast.parse(code)
+    except SyntaxError as e:
+        return [f"SyntaxError during validation: {e}"]
+
+    network_modules = {"requests", "urllib", "http", "aiohttp", "httpx"}
+
+    class NetworkCallVisitor(ast.NodeVisitor):
+        def __init__(self):
+            self.in_try = False
+            self.violations = []
+
+        def visit_Try(self, node):
+            old_in_try = self.in_try
+            
+            # The try block body
+            self.in_try = True
+            for stmt in node.body:
+                self.visit(stmt)
+                
+            # Exception handlers, else, and finally blocks shouldn't inherit the try protection
+            self.in_try = old_in_try
+            for handler in node.handlers:
+                self.visit(handler)
+            for stmt in node.orelse:
+                self.visit(stmt)
+            for stmt in node.finalbody:
+                self.visit(stmt)
+
+        # Explicit pass-through for nested control flows to guarantee state persistence
+        def visit_With(self, node):
+            self.generic_visit(node)
+
+        def visit_For(self, node):
+            self.generic_visit(node)
+
+        def visit_If(self, node):
+            self.generic_visit(node)
+
+        def visit_Call(self, node):
+            if not self.in_try:
+                call_name = ""
+                if isinstance(node.func, ast.Attribute):
+                    if isinstance(node.func.value, ast.Name):
+                        call_name = f"{node.func.value.id}.{node.func.attr}"
+                    elif isinstance(node.func.value, ast.Attribute):
+                        if isinstance(node.func.value.value, ast.Name):
+                            call_name = f"{node.func.value.value.id}.{node.func.value.attr}.{node.func.attr}"
+                elif isinstance(node.func, ast.Name):
+                    call_name = node.func.id
+
+                for mod in network_modules:
+                    if call_name.startswith(mod):
+                        self.violations.append(f"Line {node.lineno}: '{call_name}'")
+                        break
+
+            self.generic_visit(node)
+
+    visitor = NetworkCallVisitor()
+    visitor.visit(tree)
+
+    for violation in visitor.violations:
+        reasons.append(f"✗ Missing error handling: {violation} is not wrapped in a try/except block.")
+
+    return reasons
 
 
 def validate_code(code: str) -> Tuple[bool, List[str]]:
@@ -49,10 +116,8 @@ def validate_code(code: str) -> Tuple[bool, List[str]]:
         if re.search(pattern, code, re.I | re.M):
             reasons.append(message)
 
-    if not _has_try_except(code):
-        reasons.append(
-            "Missing error handling: add try/except blocks around I/O and external calls."
-        )
+    network_reasons = _validate_network_calls_in_try(code)
+    reasons.extend(network_reasons)
 
     return (len(reasons) == 0, reasons)
 
@@ -73,6 +138,8 @@ def validator_node(state: Any) -> Dict[str, Any]:
             "detected_errors": [],
             "pipeline_logs": pipeline_logs,
             "validator_attempts": attempts,
+            "coder_messages": [],
+            "coder_tool_rounds": 0,
         }
 
     feedback = reasons
@@ -89,4 +156,6 @@ def validator_node(state: Any) -> Dict[str, Any]:
         "detected_errors": feedback,
         "pipeline_logs": pipeline_logs,
         "validator_attempts": attempts + 1,
+        "coder_messages": [],
+        "coder_tool_rounds": 0,
     }

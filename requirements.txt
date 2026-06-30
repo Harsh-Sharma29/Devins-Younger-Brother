@@ -18,4 +18,4 @@ streamlit-ace==0.1.1
 fastapi==0.115.12
 uvicorn[standard]==0.34.3
 sse-starlette==2.3.6
-requests>=2.31.0
+tavily-python==0.5.1

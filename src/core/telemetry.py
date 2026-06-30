@@ -59,6 +59,9 @@ def node_transition_line(node_name: str, status: str = "Active") -> str:
     
     # Map node names to clean labels
     mapping = {
+        "coder_model": "Coder",
+        "coder_tools": "Coder · Tavily",
+        "coder_finalize": "Coder",
         "coder_agent": "Coder",
         "terminal_agent": "Terminal",
         "debugger_agent": "Debugger",

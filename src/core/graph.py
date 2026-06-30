@@ -1,8 +1,14 @@
 from typing import List, Dict, Any, Literal, Optional
 from pydantic import BaseModel, Field
 from langgraph.graph import StateGraph, START, END
+from langchain_core.messages import BaseMessage
 
-from src.agents.coder import coder_agent
+from src.agents.coder_nodes import (
+	coder_model_node,
+	coder_tool_executor,
+	coder_finalize_node,
+	route_coder_tools,
+)
 from src.agents.terminal import terminal_agent
 from src.agents.debugger import debugger_agent
 from src.agents.router import router_node, INTENT_CODING, INTENT_RESEARCH, INTENT_GENERIC
@@ -42,6 +48,11 @@ class DevinBrotherState(BaseModel):
 		description="Multi-file workspace: filename → code content",
 	)
 	active_file: str = Field(default="main.py", description="Currently displayed file in editor")
+	coder_messages: List[BaseMessage] = Field(
+		default_factory=list,
+		description="Transient message thread for Coder LLM + Tavily tool loop",
+	)
+	coder_tool_rounds: int = Field(default=0, description="Tavily tool invocation cycles (capped)")
 
 
 def get_initial_state(
@@ -67,6 +78,8 @@ def get_initial_state(
 		"validator_attempts": 0,
 		"workspace_files": {},
 		"active_file": "main.py",
+		"coder_messages": [],
+		"coder_tool_rounds": 0,
 	}
 
 
@@ -144,7 +157,7 @@ def route_after_validator(state: Any) -> str:
 		return "terminal_agent"
 	if attempts >= MAX_VALIDATOR_ATTEMPTS:
 		return "terminal_agent"
-	return "coder_agent"
+	return "coder_model"
 
 
 def route_from_terminal(state: Any) -> str:
@@ -175,7 +188,9 @@ workflow = StateGraph(DevinBrotherState)
 
 workflow.add_node("router_node", router_node)
 workflow.add_node("planner_agent", planner_agent)
-workflow.add_node("coder_agent", coder_agent)
+workflow.add_node("coder_model", coder_model_node)
+workflow.add_node("coder_tools", coder_tool_executor)
+workflow.add_node("coder_finalize", coder_finalize_node)
 workflow.add_node("validator_node", validator_node)
 workflow.add_node("terminal_agent", terminal_agent_guarded)
 workflow.add_node("debugger_agent", debugger_agent)
@@ -194,15 +209,26 @@ workflow.add_conditional_edges(
 	},
 )
 
-workflow.add_edge("planner_agent", "coder_agent")
-workflow.add_edge("coder_agent", "validator_node")
+workflow.add_edge("planner_agent", "coder_model")
+
+workflow.add_conditional_edges(
+	"coder_model",
+	route_coder_tools,
+	{
+		"coder_tools": "coder_tools",
+		"coder_finalize": "coder_finalize",
+	},
+)
+
+workflow.add_edge("coder_tools", "coder_model")
+workflow.add_edge("coder_finalize", "validator_node")
 
 workflow.add_conditional_edges(
 	"validator_node",
 	route_after_validator,
 	{
 		"terminal_agent": "terminal_agent",
-		"coder_agent": "coder_agent",
+		"coder_model": "coder_model",
 	},
 )
 

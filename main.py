@@ -2,9 +2,16 @@ import os
 import uuid
 from dotenv import load_dotenv
 
-load_dotenv()
+# Force load the .env file
+load_dotenv(override=True)
 
-from src.core.checkpointer import get_app, shutdown_checkpointer
+# Quick startup validation check
+if not os.getenv("GROQ_API_KEY"):
+    raise ValueError("❌ FATAL: GROQ_API_KEY is not loaded from .env!")
+else:
+    print("✅ Groq API Key loaded successfully.")
+
+from src.core.checkpointer import get_app, cleanup_resources
 from src.core.config import build_run_config, DEFAULT_RECURSION_LIMIT
 from src.core.graph import get_initial_state
 
@@ -61,7 +68,7 @@ def main():
     except Exception as e:
         print(f"❌ Error during graph invocation: {e}")
     finally:
-        shutdown_checkpointer()
+        cleanup_resources()
 
 
 if __name__ == "__main__":

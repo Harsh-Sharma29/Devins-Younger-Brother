@@ -328,6 +328,9 @@ def _render_pipeline_graph(active_node_name: Optional[str], *, container: Any) -
     node_mapping = {
         "router_node": "Router",
         "planner_agent": "Planner",
+        "coder_model": "Coder",
+        "coder_tools": "Coder",
+        "coder_finalize": "Coder",
         "coder_agent": "Coder",
         "validator_node": "Validator",
         "terminal_agent": "Sandbox",

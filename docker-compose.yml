@@ -3,15 +3,15 @@ services:
     image: postgres:16-alpine
     container_name: devin-brother-postgres
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-devin}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-devin}
-      POSTGRES_DB: ${POSTGRES_DB:-devin_brother}
+      - POSTGRES_USER=devin
+      - POSTGRES_PASSWORD=devin
+      - POSTGRES_DB=devin_brother
     volumes:
       - dyb_postgres:/var/lib/postgresql/data
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-devin} -d ${POSTGRES_DB:-devin_brother}"]
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-devin} -d ${POSTGRES_DB:-devin_brother}" ]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -20,14 +20,13 @@ services:
       - dyb_internal
     restart: unless-stopped
 
-  devin-api:
+  devin-brother:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: devin-api
-    command: ["uvicorn", "src.api.server:app", "--host", "0.0.0.0", "--port", "8000"]
+    container_name: devin-younger-brother
     ports:
-      - "8000:8000"
+      - "8501:8501"
     env_file:
       - .env
     environment:
@@ -38,28 +37,9 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-devin}:${POSTGRES_PASSWORD:-devin}@postgres:5432/${POSTGRES_DB:-devin_brother}?sslmode=disable
     volumes:
       - dyb_sandbox:/tmp/devin_brother_sandbox
-      - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       postgres:
         condition: service_healthy
-    networks:
-      - dyb_internal
-    restart: unless-stopped
-
-  devin-ui:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: devin-ui
-    command: ["streamlit", "run", "app.py", "--server.port=8501", "--server.fileWatcherType=none"]
-    ports:
-      - "8501:8501"
-    env_file:
-      - .env
-    environment:
-      DYB_API_URL: http://devin-api:8000
-    depends_on:
-      - devin-api
     networks:
       - dyb_internal
     restart: unless-stopped
