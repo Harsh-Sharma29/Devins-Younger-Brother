@@ -61,11 +61,15 @@ def write_workspace_to_disk(files: Dict[str, str]) -> str:
     return workspace_dir
 
 
+import threading
+from src.core.pubsub import publish
+
 def execute_python_code(
     filename: str,
     *,
     entry_file: Optional[str] = None,
     workspace_files: Optional[Dict[str, str]] = None,
+    thread_id: Optional[str] = None,
 ) -> dict:
     """
     Executes a python file inside an ephemeral Docker container for sandbox isolation.
@@ -98,19 +102,45 @@ def execute_python_code(
         if os.path.exists(requirements_path):
             command = (
                 f"pip install --quiet -r /sandbox/requirements.txt 2>/dev/null; "
-                f"python /sandbox/{run_file}"
+                f"python -u /sandbox/{run_file}"
             )
             exec_command = ["sh", "-c", command]
         else:
-            exec_command = ["python", f"/sandbox/{run_file}"]
+            exec_command = ["python", "-u", f"/sandbox/{run_file}"]
 
+        # Use named volume if running inside Docker Compose, else use local path
+        volume_source = os.getenv("DYB_DOCKER_VOLUME", workspace_dir)
+        
         # Spin up ephemeral container, mount workspace as read-only volume
         container = client.containers.run(
             image="python:3.11-slim",
             command=exec_command,
-            volumes={workspace_dir: {'bind': '/sandbox', 'mode': 'ro'}},
+            volumes={volume_source: {'bind': '/sandbox', 'mode': 'ro'}},
             detach=True
         )
+
+        stdout_acc = []
+        stderr_acc = []
+
+        if thread_id:
+            publish(thread_id, f"[Sandbox] Executing {run_file}...\n")
+            
+            def stream_logs():
+                try:
+                    for out, err in container.logs(stream=True, follow=True, demux=True):
+                        if out:
+                            chunk = out.decode("utf-8", errors="replace")
+                            stdout_acc.append(chunk)
+                            publish(thread_id, chunk)
+                        if err:
+                            chunk = err.decode("utf-8", errors="replace")
+                            stderr_acc.append(chunk)
+                            publish(thread_id, chunk)
+                except Exception:
+                    pass
+
+            t = threading.Thread(target=stream_logs, daemon=True)
+            t.start()
 
         # Wait with 10-second timeout constraint
         start_time = time.time()
@@ -123,23 +153,37 @@ def execute_python_code(
             if time.time() - start_time > timeout:
                 container.kill()
                 container.remove(force=True)
-                return {"stdout": "", "stderr": "Execution timed out (10s limit).", "returncode": 124}
+                msg = "\nExecution timed out (10s limit).\n"
+                if thread_id: publish(thread_id, msg)
+                return {"stdout": "".join(stdout_acc), "stderr": msg, "returncode": 124}
             time.sleep(0.2)
 
         # Extract exit code
         result = container.wait()
         returncode = result.get('StatusCode', 1)
 
-        # Capture logs
-        stdout = container.logs(stdout=True, stderr=False).decode("utf-8")
-        stderr = container.logs(stdout=False, stderr=True).decode("utf-8")
+        # Ensure threads finish and we capture anything left if thread_id wasn't passed
+        if not thread_id:
+            stdout_str = container.logs(stdout=True, stderr=False).decode("utf-8", errors="replace")
+            stderr_str = container.logs(stdout=False, stderr=True).decode("utf-8", errors="replace")
+        else:
+            t.join(timeout=1.0)
+            stdout_str = "".join(stdout_acc)
+            stderr_str = "".join(stderr_acc)
 
         # Cleanup
         container.remove()
 
+        if returncode != 0:
+            print(f"[Sandbox Failed] Return code: {returncode}")
+            if stdout_str:
+                print(f"[Sandbox STDOUT]\n{stdout_str}")
+            if stderr_str:
+                print(f"[Sandbox STDERR]\n{stderr_str}")
+
         return {
-            "stdout": stdout,
-            "stderr": stderr,
+            "stdout": stdout_str,
+            "stderr": stderr_str,
             "returncode": returncode
         }
     except docker.errors.DockerException as e:

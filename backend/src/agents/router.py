@@ -38,6 +38,14 @@ def classify_intent(user_prompt: str) -> str:
     if not text:
         return INTENT_GENERIC
 
+    strict_coding_keywords = [
+        "task:", "build", "create", "execute", "python", 
+        "script", ".py", "functions", "project", "modular",
+        "utility", "utilities"
+    ]
+    if any(keyword in text for keyword in strict_coding_keywords):
+        return INTENT_CODING
+
     coding_score = sum(1 for p in _CODING_PATTERNS if re.search(p, text, re.I))
     research_score = sum(1 for p in _RESEARCH_PATTERNS if re.search(p, text, re.I))
 

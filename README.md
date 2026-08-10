@@ -27,6 +27,7 @@
 |---------|-------------|
 | 🧠 **Llama 3.3 70B on Groq** | Lightning-fast code generation via Groq's inference engine — sub-second tool calling with zero Protobuf serialization issues |
 | 🐳 **Docker Sandbox Execution** | All generated code runs inside ephemeral `python:3.11-slim` containers with 10s timeouts — your host machine is never at risk |
+| ⚡ **WebSocket Live Terminal** | Real-time streaming of Docker sandbox output directly to the UI, providing an interactive terminal experience |
 | 🔬 **AST-Powered Validator** | Self-healing code pipeline — an `ast.NodeVisitor` statically analyzes every generated script for unsafe operations, hardcoded secrets, and missing `try/except` blocks *before* execution |
 | 🐙 **GitHub Integration** | Autonomous repository navigation — the Coder can browse directories and read files from any GitHub repo using built-in `PyGithub` tools |
 | 🔍 **Tavily Web Search** | Real-time API documentation lookup via Tavily — with strict intent-routing to prevent tool over-triggering |
@@ -117,7 +118,8 @@ GITHUB_ACCESS_TOKEN=ghp_your_github_token_here
 
 # Database (auto-configured by Docker Compose)
 DATABASE_URL=postgresql://devin:devin@localhost:5432/devin_brother?sslmode=disable
-DYB_API_URL=http://localhost:8000
+DYB_API_URL=http://localhost:8005
+NEXT_PUBLIC_API_URL=http://localhost:8005
 ```
 
 ### 3️⃣ Start Infrastructure
@@ -135,17 +137,24 @@ Open **two separate terminals**:
 
 **Terminal 1 — 🖥️ FastAPI Backend:**
 ```bash
-python -m uvicorn src.api.server:app --host 127.0.0.1 --port 8000
+cd backend
+python -m uvicorn src.api.server:app --host 127.0.0.1 --port 8005
 ```
 
-**Terminal 2 — 🎨 Streamlit Frontend:**
+**Terminal 2 — 🎨 Next.js Frontend:**
 ```bash
-python -m streamlit run app.py
+cd frontend
+npm run dev
+```
+
+Alternatively, run everything via Docker:
+```bash
+docker compose up -d --build
 ```
 
 ### 5️⃣ Open the IDE
 
-Navigate to **http://localhost:8501**, enter a coding prompt, and click **🚀 Execute Pipeline**.
+Navigate to **http://localhost:3005**, enter a coding prompt, and click **🚀 Execute Pipeline**.
 
 ---
 
@@ -188,39 +197,25 @@ Navigate to **http://localhost:8501**, enter a coding prompt, and click **🚀 E
 
 ## 📁 Project Structure
 
-```
 Devin/
-├── app.py                          # Streamlit Pro IDE frontend (SSE client)
-├── main.py                         # CLI LangGraph entry point
-├── Dockerfile                      # Multi-purpose container image
-├── docker-compose.yml              # Full stack: Postgres + API + UI
-├── requirements.txt                # Pinned dependencies
+├── docker-compose.yml              # Full stack: Postgres + Backend + Frontend
 ├── .env.example                    # Environment template
-└── src/
-    ├── api/
-    │   └── server.py               # FastAPI backend — SSE streaming, endpoints
-    ├── core/
-    │   ├── checkpointer.py         # Postgres ↔ MemorySaver connection pool
-    │   ├── config.py               # Central config (DATABASE_URL, limits)
-    │   ├── graph.py                # LangGraph state machine & conditional routing
-    │   ├── llm_fallback.py         # LLM failover + code sanitization utilities
-    │   ├── memory.py               # Sliding-window conversation history
-    │   └── telemetry.py            # CPU/RAM metrics, token estimates
-    ├── agents/
-    │   ├── router.py               # Intent classification (no LLM call)
-    │   ├── planner.py              # Mission planning
-    │   ├── coder.py                # Code generation + multi-file parsing
-    │   ├── coder_nodes.py          # Groq LLM + ReAct ToolNode loop
-    │   ├── validator.py            # AST-based pre-sandbox security analysis
-    │   ├── terminal.py             # Docker sandbox execution
-    │   ├── debugger.py             # Self-healing traceback repair
-    │   ├── research.py             # Technical research (no sandbox)
-    │   └── knowledge.py            # Generic Q&A (no sandbox)
-    └── tools/
-        ├── file_ops.py             # Workspace I/O + Docker runner
-        ├── web_search.py           # Tavily search integration
-        └── github_tools.py         # GitHub file & repo navigation tools
-```
+├── backend/
+│   ├── main.py                     # CLI LangGraph entry point
+│   ├── Dockerfile                  # FastAPI backend image
+│   ├── requirements.txt            # Python dependencies
+│   └── src/
+│       ├── api/
+│       │   └── server.py           # FastAPI backend — SSE streaming, endpoints
+│       ├── core/
+│       ├── agents/
+│       └── tools/
+├── frontend/
+│   ├── Dockerfile                  # Next.js frontend image
+│   ├── package.json                # Node dependencies
+│   └── src/                        # Next.js App Router code
+└── legacy/
+    └── app.py                      # Archived Streamlit Pro IDE frontend
 
 ---
 

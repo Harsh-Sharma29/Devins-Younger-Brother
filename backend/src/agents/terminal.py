@@ -1,11 +1,12 @@
 from typing import Dict, Any, TYPE_CHECKING
 from src.tools.file_ops import execute_python_code
 from src.core.memory import get_state_field
+from langchain_core.runnables import RunnableConfig
 
 if TYPE_CHECKING:
     from src.core.graph import DevinBrotherState
 
-def terminal_agent(state: 'DevinBrotherState') -> Dict[str, Any]:
+def terminal_agent(state: 'DevinBrotherState', config: RunnableConfig = None) -> Dict[str, Any]:
     """
     Executes the generated code via the Docker sandbox.
     Supports multi-file workspaces with configurable entry points.
@@ -27,11 +28,14 @@ def terminal_agent(state: 'DevinBrotherState') -> Dict[str, Any]:
         # Legacy single-file mode
         entry_file = "main.py"
 
+    thread_id = config.get("configurable", {}).get("thread_id") if config else None
+
     # Run the script
     result = execute_python_code(
         entry_file,
         entry_file=entry_file,
         workspace_files=workspace_files if workspace_files else None,
+        thread_id=thread_id,
     )
 
     if result["returncode"] == 0:

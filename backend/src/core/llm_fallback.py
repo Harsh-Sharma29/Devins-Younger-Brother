@@ -4,7 +4,6 @@ import logging
 from dataclasses import dataclass
 from typing import Tuple, Optional
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_huggingface import HuggingFaceEndpoint, ChatHuggingFace
 from langchain_core.messages import HumanMessage, SystemMessage
 
 logger = logging.getLogger(__name__)
@@ -37,24 +36,20 @@ def call_agent_llm(system_prompt: str, user_message: str) -> LLMResult:
 		error_str = str(e)
 		# Checking for any variation of quota limits or service exhaustion
 		if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str or "503" in error_str:
-			logger.warning("[LLM Fallback] Gemini quota exceeded — switching to ChatHuggingFace fallback layer")
+			logger.warning("[LLM Fallback] Gemini quota exceeded — switching to Groq fallback layer")
 			
-			hf_token = os.getenv("HUGGINGFACEHUB_API_TOKEN")
-			if not hf_token:
-				logger.error("[LLM Fallback] HUGGINGFACEHUB_API_TOKEN is missing in .env")
+			groq_api_key = os.getenv("GROQ_API_KEY")
+			if not groq_api_key:
+				logger.error("[LLM Fallback] GROQ_API_KEY is missing in .env")
 				raise e
 			
-			# 2. Secondary Engine: Llama-3-8B wrapped cleanly using text-generation task to avoid validation clash
-			llm_endpoint = HuggingFaceEndpoint(
-				repo_id="meta-llama/Meta-Llama-3-8B-Instruct",
-				huggingfacehub_api_token=hf_token,
-				max_new_tokens=500,
+			# 2. Secondary Engine: Groq Llama 3.3 70B
+			from langchain_groq import ChatGroq
+			chat_model = ChatGroq(
+				model="llama-3.3-70b-versatile",
 				temperature=0.2,
-				task="text-generation"
+				api_key=groq_api_key
 			)
-			
-			# Wrapping endpoint to force proper format constraints
-			chat_model = ChatHuggingFace(llm=llm_endpoint)
 			
 			messages = [
 				SystemMessage(content=system_prompt),
@@ -62,9 +57,14 @@ def call_agent_llm(system_prompt: str, user_message: str) -> LLMResult:
 			]
 			
 			fallback_response = chat_model.invoke(messages)
+			
+			if fallback_response is None or not fallback_response.content:
+				logger.error("[LLM Fallback] Invalid payload rejected: None")
+				raise ValueError("Debugger LLM returned None payload.")
+				
 			return LLMResult(
 				content=fallback_response.content,
-				provider="huggingface",
+				provider="groq",
 				used_failover=True
 			)
 		

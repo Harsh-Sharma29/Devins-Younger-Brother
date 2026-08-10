@@ -115,7 +115,9 @@ def sanitize_state_code_buffer(state: Any) -> Dict[str, Any]:
 	}
 
 
-def terminal_agent_guarded(state: Any) -> Dict[str, Any]:
+from langchain_core.runnables import RunnableConfig
+
+def terminal_agent_guarded(state: Any, config: RunnableConfig = None) -> Dict[str, Any]:
 	patch = sanitize_state_code_buffer(state)
 
 	if isinstance(state, dict):
@@ -125,7 +127,7 @@ def terminal_agent_guarded(state: Any) -> Dict[str, Any]:
 		merged = state.model_copy(update=patch) if patch else state
 		logs = list(getattr(merged, "pipeline_logs", []) or [])
 
-	result = terminal_agent(merged)
+	result = terminal_agent(merged, config)
 	status = "PASSED" if result.get("is_verified") else "FAILED"
 	logs.append(f"[Terminal] Docker sandbox run {status}.")
 	result["pipeline_logs"] = logs

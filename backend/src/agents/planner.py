@@ -33,7 +33,7 @@ def _suggest_file_structure(user_prompt: str) -> str:
             " Consider structuring as a multi-file project: "
             "main.py (entry point), utils.py (helpers), and requirements.txt if external deps are needed."
         )
-    return ""
+    return " Default strictly to a single-file workspace (main.py) for this script task. Suppress multi-file suggestions (utils.py, requirements.txt) unless explicitly asked."
 
 
 def planner_agent(state: Any) -> Dict[str, Any]:

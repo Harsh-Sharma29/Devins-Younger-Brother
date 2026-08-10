@@ -39,17 +39,19 @@ CODER_SYSTEM_PROMPT = (
     "Never embed API keys or secrets. Never use os.remove, shutil.rmtree, eval, exec, or shell=True subprocess calls.\n"
     "For HTTP calls, use Python's built-in urllib.request — do NOT import 'requests' (not available).\n\n"
     "CRITICAL INSTRUCTION: Whenever you write code involving network requests, API calls, or I/O operations, you MUST wrap the actual execution in a comprehensive try...except block to gracefully handle connection and decoding errors.\n\n"
-    "TOOL ROUTING PROTOCOL (Strictly Follow):\n"
+    "TOOL ROUTING PROTOCOL (Strictly Follow TWO-PHASE EXECUTION):\n"
+    "Phase 1 (Tool Invocation): If the task involves fetching files or reading READMEs from a repository, you MUST always execute your GitHub tools FIRST to retrieve the raw string content into your context.\n"
+    "Phase 2 (Code Generation): CRITICAL: If a GitHub tool has already fetched text into the message history, extract that EXACT string from the tool output and place it directly into a variable inside main.py using triple-quotes ('''...''').\n"
+    "NEVER write python code that uses `urllib`, `requests`, `http.client`, or any networking module to download content at runtime. The file must be 100% offline and self-contained.\n\n"
     "You must analyze the user's intent before invoking any tool.\n"
-    "- Intent = Repository Access: If the task involves fetching files or reading READMEs, use ONLY the GitHub tools. Do not search the web.\n"
     "- Intent = External Knowledge: Use Tavily search ONLY for looking up unknown API documentations or general knowledge.\n"
-    "- Intent = Code Generation: Once you have fetched the necessary context from GitHub, DO NOT use Tavily Search to figure out how to write the code. Rely on your internal knowledge to immediately write the final Python script.\n"
+    "- Intent = Code Generation: Once you have fetched the necessary context, DO NOT use Tavily Search to figure out how to write the code. Rely on your internal knowledge to immediately write the final Python script.\n"
     "After using a tool and receiving its output, you MUST immediately produce your final code output. Do NOT chain additional tool calls unless absolutely necessary for a different intent."
 )
 
-_tavily_tools = get_tavily_tools()
+_tavily_tools = get_tavily_tools() # Retained for import if needed elsewhere, but not bound to Coder
 _github_tools = get_github_tools()
-_coder_tools = _tavily_tools + _github_tools
+_coder_tools = _github_tools  # Only bind GitHub tools to prevent dynamic web search during coding
 
 _coder_tool_node = (
     ToolNode(_coder_tools, messages_key="coder_messages") if _coder_tools else None
@@ -61,15 +63,23 @@ def _messages_from_state(state: Any) -> List[BaseMessage]:
     return list(raw)
 
 
+from src.core.memory_rag import retrieve_context
+
 def _build_user_message(state: Any) -> str:
     user_prompt = get_state_field(state, "user_prompt", "") or ""
     history = get_state_field(state, "conversation_history", []) or []
     validator_feedback = get_state_field(state, "validator_feedback", []) or []
     context = format_history_context(history)
 
+    # Retrieve RAG context globally
+    rag_context = retrieve_context(user_prompt, thread_id="global_workspace", k=5)
+    if rag_context:
+        rag_context = f"\n\n{rag_context}\n"
+
     message = (
-        f"Conversation context (last exchanges):\n{context}\n\n"
-        f"Task:\n{user_prompt}"
+        f"Conversation context (last exchanges):\n{context}\n"
+        f"{rag_context}"
+        f"\nTask:\n{user_prompt}"
     )
     if validator_feedback:
         feedback_block = "\n".join(f"- {item}" for item in validator_feedback)
@@ -119,39 +129,44 @@ def coder_model_node(state: Any) -> Dict[str, Any]:
     try:
         llm = _groq_with_tools()
         response = llm.invoke(messages)
-
-        if not isinstance(response, AIMessage):
-            response = AIMessage(content=str(getattr(response, "content", response)))
-
-        messages = messages + [response]
-
-        tool_calls = getattr(response, "tool_calls", None) or []
-        if tool_calls:
-            pipeline_logs.append("[Coder] Invoking Tools...")
-
-        return {
-            "coder_messages": messages,
-            "coder_tool_rounds": tool_rounds,
-            "pipeline_logs": pipeline_logs,
-            "llm_provider": "groq",
-            "used_hf_failover": used_hf_failover,
-            "terminal_output": terminal_output,
-            "conversation_history": history,
-            "validation_passed": False,
-            "validator_feedback": [],
-        }
     except Exception as exc:
-        error_str = str(exc)
-        pipeline_logs.append(f"[Coder] LLM failure: {exc}")
-        return {
-            "coder_messages": [],
-            "detected_errors": [error_str],
-            "pipeline_logs": pipeline_logs,
-            "llm_provider": get_state_field(state, "llm_provider", "groq"),
-            "used_hf_failover": used_hf_failover,
-            "terminal_output": terminal_output + f"\n[Coder] Error: {exc}",
-            "validation_passed": False,
-        }
+        pipeline_logs.append(f"[Coder] LLM tool syntax error ({exc}). Retrying...")
+        messages.append(HumanMessage(content=f"System Error: Your previous response caused an exception: {exc}\nYou likely output raw text instead of a valid JSON tool call. Please try again, and ensure you use valid tool invocation syntax, or output the final python code directly if no tools are needed."))
+        try:
+            response = llm.invoke(messages)
+        except Exception as exc2:
+            error_str = str(exc2)
+            pipeline_logs.append(f"[Coder] LLM failure on retry: {exc2}")
+            return {
+                "coder_messages": [],
+                "detected_errors": [error_str],
+                "pipeline_logs": pipeline_logs,
+                "llm_provider": get_state_field(state, "llm_provider", "groq"),
+                "used_hf_failover": used_hf_failover,
+                "terminal_output": terminal_output + f"\n[Coder] Error: {exc2}",
+                "validation_passed": False,
+            }
+
+    if not isinstance(response, AIMessage):
+        response = AIMessage(content=str(getattr(response, "content", response)))
+
+    messages = messages + [response]
+
+    tool_calls = getattr(response, "tool_calls", None) or []
+    if tool_calls:
+        pipeline_logs.append("[Coder] Invoking Tools...")
+
+    return {
+        "coder_messages": messages,
+        "coder_tool_rounds": tool_rounds,
+        "pipeline_logs": pipeline_logs,
+        "llm_provider": "groq",
+        "used_hf_failover": used_hf_failover,
+        "terminal_output": terminal_output,
+        "conversation_history": history,
+        "validation_passed": False,
+        "validator_feedback": [],
+    }
 
 
 def coder_tool_executor(state: Any) -> Dict[str, Any]:

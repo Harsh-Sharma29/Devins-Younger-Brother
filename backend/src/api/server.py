@@ -14,10 +14,12 @@ from contextlib import asynccontextmanager
 from typing import Any, Dict, Optional, List
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
+import queue
+import anyio
 
 load_dotenv()
 
@@ -28,6 +30,7 @@ from src.core.checkpointer import (
     cleanup_resources,
 )
 from src.core.config import DEFAULT_RECURSION_LIMIT, build_run_config
+from src.core.memory_rag import index_workspace
 from src.core.graph import get_initial_state
 from src.core.telemetry import (
     default_telemetry,
@@ -74,6 +77,8 @@ app.add_middleware(
         "http://localhost:8502",
         "http://127.0.0.1:8501",
         "http://127.0.0.1:8502",
+        "http://localhost:3005",
+        "http://127.0.0.1:3005",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -204,6 +209,23 @@ async def get_history(thread_id: str):
         raise HTTPException(status_code=500, detail=f"Error fetching history: {exc}")
 
     return HistoryResponse(thread_id=thread_id, conversation_history=[])
+
+
+@app.websocket("/api/v1/ws/terminal/{thread_id}")
+async def websocket_terminal(websocket: WebSocket, thread_id: str):
+    await websocket.accept()
+    from src.core.pubsub import add_queue, remove_queue
+    q = add_queue(thread_id)
+    try:
+        while True:
+            try:
+                # 1s timeout to allow cancellation
+                message = await anyio.to_thread.run_sync(q.get, True, 1.0)
+                await websocket.send_text(message)
+            except queue.Empty:
+                pass
+    except WebSocketDisconnect:
+        remove_queue(thread_id, q)
 
 
 @app.post("/api/v1/execute")
@@ -347,6 +369,17 @@ async def execute_pipeline(req: ExecuteRequest):
                 final_state = accumulated
         except Exception:
             final_state = accumulated
+
+        # RAG Workspace Indexing (async offload)
+        if final_state.get("workspace_files"):
+            try:
+                await anyio.to_thread.run_sync(
+                    index_workspace, 
+                    final_state["workspace_files"], 
+                    "global_workspace"
+                )
+            except Exception as e:
+                logger.error(f"Failed to trigger RAG indexing: {e}")
 
         final_telemetry = telemetry_from_state(final_state)
 
