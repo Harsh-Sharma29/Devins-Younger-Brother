@@ -3,7 +3,7 @@ FROM python:3.10-slim
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app \
-    DYB_SANDBOX_DIR=/tmp/devin_brother_sandbox
+    AUTOFORGE_SANDBOX_DIR=/tmp/autoforge_sandbox
 
 WORKDIR /app
 
@@ -18,7 +18,7 @@ COPY main.py ./
 COPY src ./src
 COPY tests ./tests
 
-RUN mkdir -p "${DYB_SANDBOX_DIR}"
+RUN mkdir -p "${AUTOFORGE_SANDBOX_DIR}"
 
 EXPOSE 8005
 

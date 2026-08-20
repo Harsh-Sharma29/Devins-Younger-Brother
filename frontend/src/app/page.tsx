@@ -13,7 +13,7 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8005";
 export default function Home() {
   const [activeFile, setActiveFile] = useState("main.py");
   const [workspaceFiles, setWorkspaceFiles] = useState<Record<string, string>>({});
-  const [consoleLogs, setConsoleLogs] = useState("[System] Devin's Younger Brother Initialized.\nWaiting for your instructions...");
+  const [consoleLogs, setConsoleLogs] = useState("[System] AutoForge Initialized.\nWaiting for your instructions...");
   const [isExecuting, setIsExecuting] = useState(false);
   const [telemetry, setTelemetry] = useState({ cpu: 0, ram: 0, tokens: 0, latency: 0 });
   const [activeNode, setActiveNode] = useState<string | null>(null);
@@ -182,7 +182,7 @@ export default function Home() {
             </svg>
           </div>
           <h1 className="text-2xl font-bold bg-gradient-to-r from-accent-cyan via-accent-blue to-purple-500 bg-clip-text text-transparent m-0 tracking-tight">
-            Devin's Younger Brother
+            AutoForge
           </h1>
           <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-[10px] font-bold tracking-widest uppercase">
             <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.8)]" />

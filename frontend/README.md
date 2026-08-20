@@ -1,6 +1,6 @@
-# Devin's Younger Brother — Frontend
+# AutoForge — Frontend
 
-This is the Next.js 15 App Router frontend for **Devin's Younger Brother**, an autonomous AI software engineer.
+This is the Next.js 15 App Router frontend for **AutoForge**, an autonomous AI software engineer.
 
 For complete documentation, architecture details, and setup instructions, please refer to the [Root README](../README.md).
 

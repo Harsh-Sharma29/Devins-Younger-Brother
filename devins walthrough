@@ -33,10 +33,10 @@ graph LR
 
 ## New Files
 
-### [\_\_init\_\_.py](file:///c:/Users/Harsh%20Sharma/OneDrive/Desktop/Devin/src/api/__init__.py)
+### [\_\_init\_\_.py](file:///c:/Users/Harsh%20Sharma/OneDrive/Desktop/AutoForge/src/api/__init__.py)
 Package init for `src.api`.
 
-### [server.py](file:///c:/Users/Harsh%20Sharma/OneDrive/Desktop/Devin/src/api/server.py)
+### [server.py](file:///c:/Users/Harsh%20Sharma/OneDrive/Desktop/AutoForge/src/api/server.py)
 FastAPI application with:
 
 | Endpoint | Method | Purpose |
@@ -56,7 +56,7 @@ FastAPI application with:
 
 ## Modified Files
 
-### [app.py](file:///c:/Users/Harsh%20Sharma/OneDrive/Desktop/Devin/app.py) — Frontend Rewrite
+### [app.py](file:///c:/Users/Harsh%20Sharma/OneDrive/Desktop/AutoForge/app.py) — Frontend Rewrite
 
 **Removed imports**:
 - `src.core.checkpointer` (get_app, check_postgres_health, is_using_fallback)
@@ -67,7 +67,7 @@ FastAPI application with:
 **Added**:
 - `import requests` — HTTP client for API communication
 - `import json` — SSE payload parsing
-- `API_BASE_URL = os.getenv("DYB_API_URL", "http://localhost:8000")` — configurable API endpoint
+- `API_BASE_URL = os.getenv("AUTOFORGE_API_URL", "http://localhost:8000")` — configurable API endpoint
 
 **New functions**:
 - `_fetch_health()` — GETs `/api/v1/health` for the status panel
@@ -82,22 +82,22 @@ FastAPI application with:
 - Banner system (running/success/error)
 - Sidebar with API connections panel
 
-### [requirements.txt](file:///c:/Users/Harsh%20Sharma/OneDrive/Desktop/Devin/requirements.txt)
+### [requirements.txt](file:///c:/Users/Harsh%20Sharma/OneDrive/Desktop/AutoForge/requirements.txt)
 Added: `fastapi==0.115.12`, `uvicorn[standard]==0.34.3`, `sse-starlette==2.3.6`, `requests>=2.31.0`
 
-### [docker-compose.yml](file:///c:/Users/Harsh%20Sharma/OneDrive/Desktop/Devin/docker-compose.yml)
+### [docker-compose.yml](file:///c:/Users/Harsh%20Sharma/OneDrive/Desktop/AutoForge/docker-compose.yml)
 Split into 3 services:
 
 | Service | Container | Port | Role |
 |---------|-----------|------|------|
-| `postgres` | devin-brother-postgres | 5432 | Database |
-| `devin-api` | devin-api | 8000 | FastAPI backend |
-| `devin-ui` | devin-ui | 8501 | Streamlit frontend |
+| `postgres` | autoforge-postgres | 5432 | Database |
+| `autoforge-api` | autoforge-api | 8000 | FastAPI backend |
+| `autoforge-ui` | autoforge-ui | 8501 | Streamlit frontend |
 
-The UI service has `DYB_API_URL=http://devin-api:8000` for Docker networking.
+The UI service has `AUTOFORGE_API_URL=http://autoforge-api:8000` for Docker networking.
 
-### [.env](file:///c:/Users/Harsh%20Sharma/OneDrive/Desktop/Devin/.env)
-Added `DYB_API_URL=http://localhost:8000` for local development.
+### [.env](file:///c:/Users/Harsh%20Sharma/OneDrive/Desktop/AutoForge/.env)
+Added `AUTOFORGE_API_URL=http://localhost:8000` for local development.
 
 ---
 

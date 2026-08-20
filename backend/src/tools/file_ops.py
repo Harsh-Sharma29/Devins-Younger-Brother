@@ -7,12 +7,12 @@ from typing import Dict, Optional
 
 
 def sandbox_workspace_dir() -> str:
-    """Workspace for generated scripts; override via DYB_SANDBOX_DIR for containers."""
-    override = os.getenv("DYB_SANDBOX_DIR", "").strip()
+    """Workspace for generated scripts; override via AUTOFORGE_SANDBOX_DIR for containers."""
+    override = os.getenv("AUTOFORGE_SANDBOX_DIR", "").strip()
     if override:
         workspace_dir = os.path.abspath(override)
     else:
-        workspace_dir = os.path.join(tempfile.gettempdir(), "devin_brother_sandbox")
+        workspace_dir = os.path.join(tempfile.gettempdir(), "autoforge_sandbox")
     os.makedirs(workspace_dir, exist_ok=True)
     return workspace_dir
 
@@ -109,7 +109,7 @@ def execute_python_code(
             exec_command = ["python", "-u", f"/sandbox/{run_file}"]
 
         # Use named volume if running inside Docker Compose, else use local path
-        volume_source = os.getenv("DYB_DOCKER_VOLUME", workspace_dir)
+        volume_source = os.getenv("AUTOFORGE_DOCKER_VOLUME", workspace_dir)
         
         # Spin up ephemeral container, mount workspace as read-only volume
         container = client.containers.run(

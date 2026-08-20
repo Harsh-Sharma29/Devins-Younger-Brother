@@ -1,5 +1,5 @@
 """
-Central configuration for Devin's Younger Brother.
+Central configuration for AutoForge.
 """
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ from typing import Any, Dict, Optional
 
 # Local / compose default — override via DATABASE_URL in production.
 DEFAULT_DATABASE_URL = (
-	"postgresql://devin:devin@localhost:5432/devin_brother?sslmode=disable"
+	"postgresql://autoforge:autoforge@localhost:5432/autoforge?sslmode=disable"
 )
 
 DEFAULT_RECURSION_LIMIT = 50

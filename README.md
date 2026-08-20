@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🧠 Devin's Younger Brother
+# 🧠 AutoForge
 
 ### ⚡ Autonomous AI Software Engineer — Powered by LangGraph & Groq
 
@@ -10,7 +10,7 @@
 [![Groq](https://img.shields.io/badge/Groq-Llama_3.3_70B-F55036?logo=meta&logoColor=white)](https://groq.com)
 [![LangGraph](https://img.shields.io/badge/LangGraph-0.6-1C3C3C?logo=langchain&logoColor=white)](https://langchain-ai.github.io/langgraph/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
-[![Streamlit](https://img.shields.io/badge/Streamlit-1.50-FF4B4B?logo=streamlit&logoColor=white)](https://streamlit.io)
+[![Next.js](https://img.shields.io/badge/Next.js-15-black?logo=next.js&logoColor=white)](https://nextjs.org)
 [![Docker](https://img.shields.io/badge/Docker-Sandbox-2496ED?logo=docker&logoColor=white)](https://docker.com)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql&logoColor=white)](https://postgresql.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -33,7 +33,7 @@
 | 🔍 **Tavily Web Search** | Real-time API documentation lookup via Tavily — with strict intent-routing to prevent tool over-triggering |
 | 🔄 **Self-Healing Debugger** | If code crashes in the sandbox, tracebacks are automatically fed back to a Debugger agent that rewrites stdlib-only fixes in a closed loop |
 | 💾 **Persistent Memory** | PostgreSQL-backed checkpointing — conversation state survives page reloads with sliding-window context injection |
-| 🖥️ **Pro IDE Frontend** | 3-pane Streamlit layout with live pipeline graph, syntax-highlighted code editor, real-time terminal, and chat history |
+| 🖥️ **Pro IDE Frontend** | Modern Next.js frontend with live pipeline graph, syntax-highlighted code editor, real-time terminal, and seamless chat experience |
 
 ---
 
@@ -76,6 +76,7 @@
 | Requirement | Version | Purpose |
 |-------------|---------|---------|
 | **Python** | 3.9+ | Runtime |
+| **Node.js** | 18+ | Frontend Runtime |
 | **Docker Desktop** | Latest | Sandboxed code execution |
 | **PostgreSQL** | 16+ (via Docker Compose) | LangGraph state persistence |
 | **Groq API Key** | — | 🧠 Primary LLM engine ([get one free](https://console.groq.com)) |
@@ -89,8 +90,8 @@
 ### 1️⃣ Clone & Install
 
 ```bash
-git clone https://github.com/Harsh-Sharma29/Devin-s.git
-cd Devin-s
+git clone https://github.com/Harsh-Sharma29/AutoForge.git
+cd AutoForge
 
 python -m venv .venv
 
@@ -117,21 +118,23 @@ TAVILY_API_KEY=tvly-your_tavily_key_here
 GITHUB_ACCESS_TOKEN=ghp_your_github_token_here
 
 # Database (auto-configured by Docker Compose)
-DATABASE_URL=postgresql://devin:devin@localhost:5432/devin_brother?sslmode=disable
-DYB_API_URL=http://localhost:8005
+DATABASE_URL=postgresql://autoforge:autoforge@localhost:5432/autoforge?sslmode=disable
+AUTOFORGE_API_URL=http://localhost:8005
 NEXT_PUBLIC_API_URL=http://localhost:8005
 ```
 
 ### 3️⃣ Start Infrastructure
 
-```bash
-# Start PostgreSQL database
-docker compose up -d
-```
+The quickest way to start the entire stack (Database, Backend, and Frontend) is via Docker Compose:
 
+```bash
+docker compose up -d --build
+```
 > ⚠️ Make sure **Docker Desktop** is running before this step.
 
-### 4️⃣ Launch the Application
+### 4️⃣ Launch the Application (Manual Method)
+
+If you prefer to run the components manually instead of using Docker Compose for everything:
 
 Open **two separate terminals**:
 
@@ -144,12 +147,8 @@ python -m uvicorn src.api.server:app --host 127.0.0.1 --port 8005
 **Terminal 2 — 🎨 Next.js Frontend:**
 ```bash
 cd frontend
+npm install
 npm run dev
-```
-
-Alternatively, run everything via Docker:
-```bash
-docker compose up -d --build
 ```
 
 ### 5️⃣ Open the IDE
@@ -197,7 +196,7 @@ Navigate to **http://localhost:3005**, enter a coding prompt, and click **🚀 E
 
 ## 📁 Project Structure
 
-Devin/
+AutoForge/
 ├── docker-compose.yml              # Full stack: Postgres + Backend + Frontend
 ├── .env.example                    # Environment template
 ├── backend/
@@ -210,12 +209,10 @@ Devin/
 │       ├── core/
 │       ├── agents/
 │       └── tools/
-├── frontend/
-│   ├── Dockerfile                  # Next.js frontend image
-│   ├── package.json                # Node dependencies
-│   └── src/                        # Next.js App Router code
-└── legacy/
-    └── app.py                      # Archived Streamlit Pro IDE frontend
+└── frontend/
+    ├── Dockerfile                  # Next.js frontend image
+    ├── package.json                # Node dependencies
+    └── src/                        # Next.js App Router code
 
 ---
 
@@ -227,7 +224,7 @@ Devin/
 | `TAVILY_API_KEY` | ⚠️ Recommended | Tavily web search for real-time docs |
 | `GITHUB_ACCESS_TOKEN` | ❌ Optional | GitHub repository access |
 | `DATABASE_URL` | ✅ | PostgreSQL connection string |
-| `DYB_API_URL` | ✅ | FastAPI backend URL (`http://localhost:8000`) |
+| `AUTOFORGE_API_URL` | ✅ | FastAPI backend URL (`http://localhost:8000`) |
 | `HUGGINGFACEHUB_API_TOKEN` | ❌ Optional | HuggingFace Hub token for failover LLM |
 
 ---

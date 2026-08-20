@@ -23,7 +23,7 @@ MAX_REPAIR_ATTEMPTS = 5
 IntentType = Literal["coding", "research", "generic"]
 
 
-class DevinBrotherState(BaseModel):
+class AutoForgeState(BaseModel):
 	user_prompt: str = Field(default="", description="The original user prompt")
 	planner_suggestion: str = Field(default="", description="Planner output / file plan")
 	code_buffer: str = Field(default="", description="The active file's code content")
@@ -186,7 +186,7 @@ def route_from_terminal(state: Any) -> str:
 	return "debugger"
 
 
-workflow = StateGraph(DevinBrotherState)
+workflow = StateGraph(AutoForgeState)
 
 workflow.add_node("router_node", router_node)
 workflow.add_node("planner_agent", planner_agent)

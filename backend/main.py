@@ -24,9 +24,9 @@ DEFAULT_PROMPT = (
 
 
 def main():
-    print("🚀 Initializing Devin's Younger Brother...\n" + "-" * 40)
+    print("🚀 Initializing AutoForge...\n" + "-" * 40)
 
-    thread_id = os.getenv("DYB_THREAD_ID", "").strip() or str(uuid.uuid4())
+    thread_id = os.getenv("AUTOFORGE_THREAD_ID", "").strip() or str(uuid.uuid4())
     run_config = build_run_config(thread_id, recursion_limit=DEFAULT_RECURSION_LIMIT)
     initial_state = get_initial_state(DEFAULT_PROMPT)
 

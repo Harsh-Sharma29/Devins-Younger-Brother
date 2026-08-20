@@ -5,7 +5,7 @@ from src.core.llm_fallback import call_agent_llm, sanitize_code_for_buffer
 from src.core.memory import get_state_field
 
 if TYPE_CHECKING:
-    from src.core.graph import DevinBrotherState
+    from src.core.graph import AutoForgeState
 
 DEBUGGER_SYSTEM_INSTRUCTION = (
     "You are an expert Python debugger running inside an autonomous repair loop. "

@@ -1,35 +1,35 @@
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: devin-brother-postgres
+    container_name: autoforge-postgres
     environment:
-      - POSTGRES_USER=devin
-      - POSTGRES_PASSWORD=devin
-      - POSTGRES_DB=devin_brother
+      - POSTGRES_USER=autoforge
+      - POSTGRES_PASSWORD=autoforge
+      - POSTGRES_DB=autoforge
     volumes:
-      - dyb_postgres:/var/lib/postgresql/data
+      - autoforge_postgres:/var/lib/postgresql/data
     ports:
       - "5432:5432"
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U devin -d devin_brother" ]
+      test: [ "CMD-SHELL", "pg_isready -U autoforge -d autoforge" ]
       interval: 5s
       timeout: 5s
       retries: 10
       start_period: 10s
     networks:
-      - dyb_internal
+      - autoforge_internal
     restart: unless-stopped
 
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: devin-backend
+    container_name: autoforge-backend
     ports:
       - "8005:8005"
     volumes:
-      - dyb_chroma:/app/chroma_data
-      - dyb_sandbox:/tmp/devin_brother_sandbox
+      - autoforge_chroma:/app/chroma_data
+      - autoforge_sandbox:/tmp/autoforge_sandbox
       - /var/run/docker.sock:/var/run/docker.sock
     env_file:
       - .env
@@ -37,22 +37,36 @@ services:
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
       HUGGINGFACEHUB_API_TOKEN: ${HUGGINGFACEHUB_API_TOKEN:-}
-      DYB_SANDBOX_DIR: /tmp/devin_brother_sandbox
-      DYB_DOCKER_VOLUME: devin_dyb_sandbox
-      DATABASE_URL: postgresql://devin:devin@postgres:5432/devin_brother?sslmode=disable
+      AUTOFORGE_SANDBOX_DIR: /tmp/autoforge_sandbox
+      AUTOFORGE_DOCKER_VOLUME: autoforge_sandbox
+      DATABASE_URL: postgresql://autoforge:autoforge@postgres:5432/autoforge?sslmode=disable
     depends_on:
       postgres:
         condition: service_healthy
     networks:
-      - dyb_internal
+      - autoforge_internal
     restart: unless-stopped
 
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: autoforge-frontend
+    ports:
+      - "3005:3005"
+    environment:
+      NEXT_PUBLIC_API_URL: http://autoforge-backend:8005
+    depends_on:
+      - backend
+    networks:
+      - autoforge_internal
+    restart: unless-stopped
 
 networks:
-  dyb_internal:
+  autoforge_internal:
     driver: bridge
 
 volumes:
-  dyb_postgres:
-  dyb_chroma:
-  dyb_sandbox:
+  autoforge_postgres:
+  autoforge_chroma:
+  autoforge_sandbox:

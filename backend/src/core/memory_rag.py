@@ -57,7 +57,7 @@ def _get_collection():
                 
         adapter = LangchainEmbeddingAdapter(embeddings)
         _collection = _chroma_client.get_or_create_collection(
-            name="devin_brother_workspace",
+            name="autoforge_workspace",
             embedding_function=adapter
         )
         return _collection

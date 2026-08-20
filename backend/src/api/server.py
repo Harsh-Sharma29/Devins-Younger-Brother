@@ -1,5 +1,5 @@
 """
-Devin's Younger Brother — FastAPI Backend
+AutoForge — FastAPI Backend
 Owns LangGraph execution, Postgres checkpointing, Docker sandbox, and telemetry.
 The Streamlit frontend connects here via HTTP/SSE.
 """
@@ -51,7 +51,7 @@ logging.basicConfig(level=logging.INFO)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize LangGraph + Postgres pool on startup; cleanup on shutdown."""
-    logger.info("Starting Devin's Younger Brother API server")
+    logger.info("Starting AutoForge API server")
     try:
         get_app()  # Eagerly compile the graph + init checkpointer
         logger.info("LangGraph application compiled successfully")
@@ -64,7 +64,7 @@ async def lifespan(app: FastAPI):
 
 # ─── APP ────────────────────────────────────────────────────────────────────────
 app = FastAPI(
-    title="Devin's Younger Brother API",
+    title="AutoForge API",
     version="1.0.0",
     description="Backend API for LangGraph pipeline execution with Postgres persistence.",
     lifespan=lifespan,

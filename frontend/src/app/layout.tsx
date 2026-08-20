@@ -13,7 +13,7 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Devin's Younger Brother — Pro IDE",
+  title: "AutoForge — Pro IDE",
   description: "Autonomous AI Software Engineer Workbench",
 };
 

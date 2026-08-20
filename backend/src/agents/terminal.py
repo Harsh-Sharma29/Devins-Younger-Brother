@@ -4,9 +4,9 @@ from src.core.memory import get_state_field
 from langchain_core.runnables import RunnableConfig
 
 if TYPE_CHECKING:
-    from src.core.graph import DevinBrotherState
+    from src.core.graph import AutoForgeState
 
-def terminal_agent(state: 'DevinBrotherState', config: RunnableConfig = None) -> Dict[str, Any]:
+def terminal_agent(state: 'AutoForgeState', config: RunnableConfig = None) -> Dict[str, Any]:
     """
     Executes the generated code via the Docker sandbox.
     Supports multi-file workspaces with configurable entry points.
