@@ -70,3 +70,4 @@ volumes:
   autoforge_postgres:
   autoforge_chroma:
   autoforge_sandbox:
+    name: autoforge_sandbox

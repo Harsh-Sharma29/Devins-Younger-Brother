@@ -1,7 +1,10 @@
 from typing import Dict, Any, TYPE_CHECKING
+import os
 
 from src.tools.file_ops import write_code_to_disk, write_workspace_to_disk
-from src.core.llm_fallback import call_agent_llm, sanitize_code_for_buffer
+from src.core.llm_fallback import sanitize_code_for_buffer
+from src.core.llm_factory import get_llm
+from langchain_core.messages import SystemMessage, HumanMessage
 from src.core.memory import get_state_field
 
 if TYPE_CHECKING:
@@ -62,14 +65,16 @@ def debugger_agent(state: Any) -> Dict[str, Any]:
     )
 
     try:
-        llm_result = call_agent_llm(DEBUGGER_SYSTEM_INSTRUCTION, user_message)
-        provider_label = "Hugging Face Hub" if llm_result.used_failover else "Gemini"
-        logs.append(
-            f"[Debugger] Response via {provider_label}"
-            + (" (failover active)" if llm_result.used_failover else "")
-        )
+        llm = get_llm(temperature=0.2)
+        response = llm.invoke([
+            SystemMessage(content=DEBUGGER_SYSTEM_INSTRUCTION),
+            HumanMessage(content=user_message)
+        ])
+        
+        provider_label = os.getenv("LLM_PROVIDER", "groq").upper()
+        logs.append(f"[Debugger] Response via {provider_label}")
 
-        fixed_code, err = sanitize_code_for_buffer(llm_result.content)
+        fixed_code, err = sanitize_code_for_buffer(response.content)
         if err or not fixed_code:
             logs.append(f"[Debugger] Invalid payload rejected: {err}")
             return {
@@ -79,8 +84,8 @@ def debugger_agent(state: Any) -> Dict[str, Any]:
                 "last_code_buffer": prior_buffer,
                 "repair_attempts": attempt,
                 "pipeline_logs": logs,
-                "llm_provider": llm_result.provider,
-                "used_hf_failover": llm_result.used_failover or used_hf_failover,
+                "llm_provider": os.getenv("LLM_PROVIDER", "groq"),
+                "used_hf_failover": used_hf_failover,
                 "terminal_output": terminal_output
                 + f"\n[Debugger] Rejected invalid LLM output; prior buffer retained.",
             }
@@ -99,8 +104,8 @@ def debugger_agent(state: Any) -> Dict[str, Any]:
                 "last_code_buffer": prior_buffer,
                 "repair_attempts": attempt,
                 "pipeline_logs": logs,
-                "llm_provider": llm_result.provider,
-                "used_hf_failover": llm_result.used_failover or used_hf_failover,
+                "llm_provider": os.getenv("LLM_PROVIDER", "groq"),
+                "used_hf_failover": used_hf_failover,
                 "terminal_output": terminal_output
                 + "\n[Debugger] No code change detected — halting repair loop.",
             }
@@ -114,8 +119,8 @@ def debugger_agent(state: Any) -> Dict[str, Any]:
             "last_code_buffer": prior_buffer,
             "repair_attempts": attempt,
             "pipeline_logs": logs,
-            "llm_provider": llm_result.provider,
-            "used_hf_failover": llm_result.used_failover or used_hf_failover,
+            "llm_provider": os.getenv("LLM_PROVIDER", "groq"),
+            "used_hf_failover": used_hf_failover,
             "terminal_output": terminal_output
             + f"\n[Debugger] Repair attempt {attempt} via {provider_label}: errors flushed, re-running sandbox…",
         }

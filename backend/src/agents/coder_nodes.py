@@ -1,5 +1,5 @@
 """
-Coder agent nodes — LLM (Groq Llama 3.3) + ToolNode ReAct loop + code extraction.
+Coder agent nodes — LLM (Configured LLM) + ToolNode ReAct loop + code extraction.
 
 Graph flow:
   coder_model → (tool calls?) → coder_tools → coder_model → coder_finalize
@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Literal
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
-from langchain_groq import ChatGroq
+from src.core.llm_factory import get_llm
 from langgraph.prebuilt import ToolNode
 
 from src.agents.coder import (
@@ -51,7 +51,7 @@ CODER_SYSTEM_PROMPT = (
 
 _tavily_tools = get_tavily_tools() # Retained for import if needed elsewhere, but not bound to Coder
 _github_tools = get_github_tools()
-_coder_tools = _github_tools  # Only bind GitHub tools to prevent dynamic web search during coding
+_coder_tools = None  # Disabled to prevent proxy connection errors and infinite ReAct loops
 
 _coder_tool_node = (
     ToolNode(_coder_tools, messages_key="coder_messages") if _coder_tools else None
@@ -90,11 +90,8 @@ def _build_user_message(state: Any) -> str:
     return message
 
 
-def _groq_with_tools():
-    llm = ChatGroq(
-        model="llama-3.3-70b-versatile",
-        temperature=0,
-    )
+def _llm_with_tools():
+    llm = get_llm(temperature=0)
     if _coder_tools:
         return llm.bind_tools(_coder_tools)
     return llm
@@ -124,10 +121,10 @@ def coder_model_node(state: Any) -> Dict[str, Any]:
         messages = prior_messages
 
     search_note = " (Tavily web search enabled)" if tavily_configured() else ""
-    pipeline_logs.append(f"[Coder] Invoking LLM (primary: Groq Llama 3.3){search_note}…")
+    pipeline_logs.append(f"[Coder] Invoking LLM (primary: Configured LLM){search_note}…")
 
     try:
-        llm = _groq_with_tools()
+        llm = _llm_with_tools()
         response = llm.invoke(messages)
     except Exception as exc:
         pipeline_logs.append(f"[Coder] LLM tool syntax error ({exc}). Retrying...")

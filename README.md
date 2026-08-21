@@ -2,7 +2,7 @@
 
 # 🧠 AutoForge
 
-### ⚡ Autonomous AI Software Engineer — Powered by LangGraph & Groq
+### ⚡ Autonomous AI Software Engineer — Powered by LangGraph & Multi-Model LLMs (Groq, Gemini, OpenAI, Claude)
 
 **Plan → Code → Validate → Execute → Self-Heal**
 
@@ -15,7 +15,7 @@
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql&logoColor=white)](https://postgresql.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-*A fully autonomous, multi-agent software engineering system that plans, writes, validates, executes, and self-heals Python code inside an isolated Docker sandbox — powered by Groq's lightning-fast Llama 3.3 70B inference engine.*
+*A fully autonomous, multi-agent software engineering system that plans, writes, validates, executes, and self-heals Python code inside an isolated Docker sandbox — powered by your choice of LLM (Groq, Gemini Free Tier, OpenAI GPT-4o, or Anthropic Claude).*
 
 ---
 
@@ -25,7 +25,7 @@
 
 | Feature | Description |
 |---------|-------------|
-| 🧠 **Llama 3.3 70B on Groq** | Lightning-fast code generation via Groq's inference engine — sub-second tool calling with zero Protobuf serialization issues |
+| 🧠 **Multi-Model Support** | Choose your engine: Lightning-fast Groq (Llama), Free Tier Google Gemini, OpenAI GPT-4o, or Anthropic Claude 3.5. Configure seamlessly via `.env`. |
 | 🐳 **Docker Sandbox Execution** | All generated code runs inside ephemeral `python:3.11-slim` containers with 10s timeouts — your host machine is never at risk |
 | ⚡ **WebSocket Live Terminal** | Real-time streaming of Docker sandbox output directly to the UI, providing an interactive terminal experience |
 | 🔬 **AST-Powered Validator** | Self-healing code pipeline — an `ast.NodeVisitor` statically analyzes every generated script for unsafe operations, hardcoded secrets, and missing `try/except` blocks *before* execution |
@@ -113,7 +113,16 @@ cp .env.example .env
 Edit `.env` with your API keys:
 
 ```env
+# LLM Configuration (groq, gemini, openai, anthropic)
+LLM_PROVIDER=gemini
+LLM_MODEL=gemini-2.5-flash
+
+# API Keys (Provide the one corresponding to your LLM_PROVIDER)
+GEMINI_API_KEY=AIza...
 GROQ_API_KEY=gsk_your_groq_api_key_here
+OPENAI_API_KEY=sk-...
+ANTHROPIC_API_KEY=sk-ant-...
+
 TAVILY_API_KEY=tvly-your_tavily_key_here
 GITHUB_ACCESS_TOKEN=ghp_your_github_token_here
 
@@ -220,7 +229,10 @@ AutoForge/
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `GROQ_API_KEY` | ✅ | Groq API key — powers Llama 3.3 70B |
+| `LLM_PROVIDER` | ✅ | `groq`, `gemini`, `openai`, or `anthropic` |
+| `LLM_MODEL` | ✅ | e.g. `gemini-2.5-flash`, `gpt-4o`, `llama3-70b-8192` |
+| `GEMINI_API_KEY` | ⚠️ | Required if LLM_PROVIDER=gemini (Free Tier available) |
+| `GROQ_API_KEY` | ⚠️ | Required if LLM_PROVIDER=groq |
 | `TAVILY_API_KEY` | ⚠️ Recommended | Tavily web search for real-time docs |
 | `GITHUB_ACCESS_TOKEN` | ❌ Optional | GitHub repository access |
 | `DATABASE_URL` | ✅ | PostgreSQL connection string |
