@@ -1,55 +1,55 @@
-from typing import Dict, Any, TYPE_CHECKING
+from typing import Any, Dict
+from src.core.memory import get_state_field, get_thread_id
 from src.tools.file_ops import execute_python_code
-from src.core.memory import get_state_field
-from langchain_core.runnables import RunnableConfig
+from src.core.types import ErrorTaxonomy
 
-if TYPE_CHECKING:
-    from src.core.graph import AutoForgeState
-
-def terminal_agent(state: 'AutoForgeState', config: RunnableConfig = None) -> Dict[str, Any]:
-    """
-    Executes the generated code via the Docker sandbox.
-    Supports multi-file workspaces with configurable entry points.
-    """
-    workspace_files = get_state_field(state, "workspace_files", {}) or {}
+def terminal_agent(state: Any, config: Any = None) -> Dict[str, Any]:
     active_file = get_state_field(state, "active_file", "main.py") or "main.py"
+    workspace_files = get_state_field(state, "workspace_files", {})
+    if not workspace_files:
+        code_buffer = get_state_field(state, "code_buffer", "") or ""
+        workspace_files = {active_file: code_buffer}
+        
+    artifact_plan = get_state_field(state, "artifact_plan", {})
+    entry_file = artifact_plan.get("entry_file", active_file)
+    runtime = artifact_plan.get("runtime", "Python")
 
-    # Determine entry file — prefer active_file, fallback through common names
-    if workspace_files:
-        if active_file in workspace_files:
-            entry_file = active_file
-        elif "main.py" in workspace_files:
-            entry_file = "main.py"
-        else:
-            # Use first .py file
-            py_files = sorted(f for f in workspace_files if f.endswith(".py"))
-            entry_file = py_files[0] if py_files else active_file
-    else:
-        # Legacy single-file mode
-        entry_file = "main.py"
+    pipeline_logs = list(get_state_field(state, "pipeline_logs", []) or [])
+    pipeline_logs.append(f"[Terminal] Sending '{entry_file}' to Sandbox...")
 
-    thread_id = config.get("configurable", {}).get("thread_id") if config else None
+    thread_id = get_thread_id(config) if config else None
 
-    # Run the script
     result = execute_python_code(
-        entry_file,
+        active_file,
         entry_file=entry_file,
-        workspace_files=workspace_files if workspace_files else None,
+        workspace_files=workspace_files,
         thread_id=thread_id,
+        runtime=runtime
     )
 
-    if result["returncode"] == 0:
-        return {
-            "terminal_output": result["stdout"],
-            "detected_errors": [],
-            "is_verified": True
-        }
-    else:
-        # Include both stderr and stdout in case the error is logged to stdout
-        error_msg = result["stderr"] if result["stderr"] else result["stdout"]
+    status = result.get("status")
+    err_type = result.get("error_type")
+    safety = result.get("safety_status")
+    
+    stdout = result.get("stdout", "")
+    stderr = result.get("stderr", "")
+    full_output = f"{stdout}\n{stderr}".strip()
 
-        return {
-            "terminal_output": result["stdout"],
-            "detected_errors": [error_msg],
-            "is_verified": False
-        }
+    is_verified = (status == "passed")
+    detected_errors = []
+    
+    pipeline_logs.append(f"[Terminal] Execution {status.upper()}. ErrorType: {err_type}, Safety: {safety.upper()}")
+
+    if not is_verified:
+        detected_errors.append(stderr or stdout or "Unknown failure")
+        pipeline_logs.append(f"[Terminal] Output\n{full_output}")
+
+    return {
+        "terminal_output": full_output,
+        "is_verified": is_verified,
+        "detected_errors": detected_errors,
+        "pipeline_logs": pipeline_logs,
+        "execution_status": status,
+        "error_type": err_type,
+        "safety_status": safety
+    }

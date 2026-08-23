@@ -25,28 +25,26 @@ from src.tools.github_tools import get_github_tools
 
 MAX_CODER_TOOL_ROUNDS = 3
 
-CODER_SYSTEM_PROMPT = (
-    "You are an expert Python developer.\n"
-    "Return ONLY valid Python code in your final answer.\n"
+CODER_SYSTEM_PROMPT_TEMPLATE = (
+    "You are an expert developer.\n"
+    "Return ONLY valid code in your final answer.\n"
     "When the task requires multiple files, output them using this separator format:\n"
-    "# --- FILE: filename.py ---\n"
+    "# --- FILE: filename.ext ---\n"
     "<code for that file>\n"
-    "# --- FILE: another_file.py ---\n"
+    "# --- FILE: another_file.ext ---\n"
     "<code for another file>\n\n"
     "If only one file is needed, wrap it in a single markdown code fence.\n"
-    "The entry point file should be named main.py unless the user specifies otherwise.\n"
-    "Code must run in an isolated Docker sandbox. Always wrap network and file I/O in try/except blocks.\n"
-    "Never embed API keys or secrets. Never use os.remove, shutil.rmtree, eval, exec, or shell=True subprocess calls.\n"
-    "For HTTP calls, use Python's built-in urllib.request — do NOT import 'requests' (not available).\n\n"
-    "CRITICAL INSTRUCTION: Whenever you write code involving network requests, API calls, or I/O operations, you MUST wrap the actual execution in a comprehensive try...except block to gracefully handle connection and decoding errors.\n\n"
-    "TOOL ROUTING PROTOCOL (Strictly Follow TWO-PHASE EXECUTION):\n"
-    "Phase 1 (Tool Invocation): If the task involves fetching files or reading READMEs from a repository, you MUST always execute your GitHub tools FIRST to retrieve the raw string content into your context.\n"
-    "Phase 2 (Code Generation): CRITICAL: If a GitHub tool has already fetched text into the message history, extract that EXACT string from the tool output and place it directly into a variable inside main.py using triple-quotes ('''...''').\n"
-    "NEVER write python code that uses `urllib`, `requests`, `http.client`, or any networking module to download content at runtime. The file must be 100% offline and self-contained.\n\n"
-    "You must analyze the user's intent before invoking any tool.\n"
-    "- Intent = External Knowledge: Use Tavily search ONLY for looking up unknown API documentations or general knowledge.\n"
-    "- Intent = Code Generation: Once you have fetched the necessary context, DO NOT use Tavily Search to figure out how to write the code. Rely on your internal knowledge to immediately write the final Python script.\n"
-    "After using a tool and receiving its output, you MUST immediately produce your final code output. Do NOT chain additional tool calls unless absolutely necessary for a different intent."
+    "Code must run in an isolated Docker sandbox.\n"
+    "Never embed API keys or secrets. Never use os.remove, shutil.rmtree, eval, exec, or shell=True subprocess calls.\n\n"
+    "CRITICAL ARTIFACT CONTRACT: You must strictly generate the exact expected files.\n""Do NOT rename files silently (e.g. do not output main.py if fib.py is requested).\n""--- ARTIFACT PLAN ---\n"
+    "Project Type: {project_type}\n"
+    "Expected Files: {expected_files}\n"
+    "Entry Point: {entry_point}\n"
+    "Target Runtime: {runtime}\n"
+    "---------------------\n\n"
+    "CRITICAL: If the runtime is 'Browser', output standard HTML/CSS/JS files as requested. Do NOT try to build a Python HTTP server to serve them! Just output the HTML/CSS/JS directly.\n"
+    "If the runtime is 'Python', output Python code, and you may include a requirements.txt if needed.\n"
+    "After using a tool and receiving its output, you MUST immediately produce your final code output."
 )
 
 _tavily_tools = get_tavily_tools() # Retained for import if needed elsewhere, but not bound to Coder
@@ -69,6 +67,7 @@ def _build_user_message(state: Any) -> str:
     user_prompt = get_state_field(state, "user_prompt", "") or ""
     history = get_state_field(state, "conversation_history", []) or []
     validator_feedback = get_state_field(state, "validator_feedback", []) or []
+    research_results = get_state_field(state, "research_results", []) or []
     context = format_history_context(history)
 
     # Retrieve RAG context globally
@@ -76,9 +75,17 @@ def _build_user_message(state: Any) -> str:
     if rag_context:
         rag_context = f"\n\n{rag_context}\n"
 
+    research_context = ""
+    if research_results:
+        research_context = "\n\n--- EXTERNAL RESEARCH DATA ---\n"
+        for r in research_results:
+            research_context += f"Source: {r.get('url')}\nContent: {r.get('content')}\n\n"
+        research_context += "USE THIS DATA TO FULFILL THE USER TASK DIRECTLY IN THE CODE.\n------------------------------\n"
+
     message = (
         f"Conversation context (last exchanges):\n{context}\n"
         f"{rag_context}"
+        f"{research_context}"
         f"\nTask:\n{user_prompt}"
     )
     if validator_feedback:
@@ -105,13 +112,19 @@ def coder_model_node(state: Any) -> Dict[str, Any]:
     history = list(get_state_field(state, "conversation_history", []) or [])
     validator_feedback = get_state_field(state, "validator_feedback", []) or []
     tool_rounds = int(get_state_field(state, "coder_tool_rounds", 0) or 0)
+    artifact_plan = get_state_field(state, 'artifact_plan', {})
 
     # Fresh message chain on validator rewrite or first coder pass
     prior_messages = _messages_from_state(state)
     if validator_feedback or not prior_messages:
         user_message = _build_user_message(state)
         messages: List[BaseMessage] = [
-            SystemMessage(content=CODER_SYSTEM_PROMPT),
+            SystemMessage(content=CODER_SYSTEM_PROMPT_TEMPLATE.format(
+                project_type=artifact_plan.get('project_type', 'Unknown'),
+                expected_files=', '.join(artifact_plan.get('artifacts', ['main.py'])),
+                entry_point=artifact_plan.get('entry', 'main.py'),
+                runtime=artifact_plan.get('runtime', 'Python')
+            )),
             HumanMessage(content=user_message),
         ]
         if validator_feedback:
@@ -170,6 +183,7 @@ def coder_tool_executor(state: Any) -> Dict[str, Any]:
     """Execute ToolNode and return tool results to the message thread."""
     pipeline_logs = list(get_state_field(state, "pipeline_logs", []) or [])
     tool_rounds = int(get_state_field(state, "coder_tool_rounds", 0) or 0)
+    artifact_plan = get_state_field(state, 'artifact_plan', {})
 
     if _coder_tool_node is None:
         pipeline_logs.append("[Coder] Tools unavailable — skipping tools.")
@@ -212,6 +226,7 @@ def coder_tool_executor(state: Any) -> Dict[str, Any]:
 def route_coder_tools(state: Any) -> Literal["coder_tools", "coder_finalize"]:
     """Route to ToolNode when the last AIMessage contains tool calls."""
     tool_rounds = int(get_state_field(state, "coder_tool_rounds", 0) or 0)
+    artifact_plan = get_state_field(state, 'artifact_plan', {})
     if tool_rounds >= MAX_CODER_TOOL_ROUNDS:
         return "coder_finalize"
 

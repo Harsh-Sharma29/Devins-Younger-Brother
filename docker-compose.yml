@@ -1,4 +1,18 @@
 services:
+  nginx:
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    container_name: autoforge-nginx
+    ports:
+      - "80:80"
+    depends_on:
+      - frontend
+      - backend
+    networks:
+      - autoforge_internal
+    restart: unless-stopped
+
   postgres:
     image: postgres:16-alpine
     container_name: autoforge-postgres
@@ -8,8 +22,6 @@ services:
       - POSTGRES_DB=autoforge
     volumes:
       - autoforge_postgres:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
     healthcheck:
       test: [ "CMD-SHELL", "pg_isready -U autoforge -d autoforge" ]
       interval: 5s
@@ -19,14 +31,16 @@ services:
     networks:
       - autoforge_internal
     restart: unless-stopped
+    expose:
+      - "5432"
 
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
     container_name: autoforge-backend
-    ports:
-      - "8005:8005"
+    expose:
+      - "8005"
     volumes:
       - autoforge_chroma:/app/chroma_data
       - autoforge_sandbox:/tmp/autoforge_sandbox
@@ -52,10 +66,10 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
     container_name: autoforge-frontend
-    ports:
-      - "3005:3005"
+    expose:
+      - "3005"
     environment:
-      NEXT_PUBLIC_API_URL: http://autoforge-backend:8005
+      NEXT_PUBLIC_API_URL: ""
     depends_on:
       - backend
     networks:

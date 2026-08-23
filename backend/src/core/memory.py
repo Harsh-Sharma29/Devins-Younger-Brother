@@ -69,3 +69,11 @@ def get_state_field(state: Any, key: str, default: Any = None) -> Any:
     if isinstance(state, dict):
         return state.get(key, default)
     return getattr(state, key, default)
+
+
+def get_thread_id(config: Any) -> Optional[str]:
+    if config and isinstance(config, dict):
+        return config.get("configurable", {}).get("thread_id")
+    elif config and hasattr(config, "get"):
+        return config.get("configurable", {}).get("thread_id")
+    return None

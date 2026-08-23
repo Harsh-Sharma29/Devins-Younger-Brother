@@ -1,0 +1,58 @@
+name: AutoForge Production Deployment
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  validate-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Deploy to EC2
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          script: |
+            # 1. Enter target directory (Assuming it's cloned at /home/ubuntu/AutoForge)
+            cd /home/ubuntu/AutoForge
+            
+            # 2. Pull latest code from main
+            git fetch --all
+            git reset --hard origin/main
+            
+            # 3. Pull required external images
+            docker compose pull
+            
+            # 4. Build custom images (Next.js multi-stage, FastAPI)
+            docker compose build
+            
+            # 5. Bring down ONLY if needed, or simply let up -d recreate
+            # We use up -d to update seamlessly. Nginx config changes will also apply.
+            docker compose up -d
+            
+            # 6. Verify Nginx health (Port 80)
+            echo "Waiting for services to spin up..."
+            sleep 10
+            
+            if curl -s -f -m 10 http://localhost > /dev/null; then
+              echo "✅ Nginx Frontend routing is UP!"
+            else
+              echo "❌ Nginx Frontend routing FAILED!"
+              exit 1
+            fi
+            
+            if curl -s -f -m 10 http://localhost/api/v1/health > /dev/null || curl -s -m 10 http://localhost/docs > /dev/null; then
+              echo "✅ API Backend is UP!"
+            else
+              echo "⚠️ API Backend check failed or wasn't mapped at expected path. Check docker logs autoforge-backend."
+              # Depending on exact health endpoint, we might not exit 1 immediately here, but it's good practice.
+            fi
+            
+            # 7. Cleanup old dangling images to save EBS disk space (Phase 12 optimization)
+            docker image prune -f

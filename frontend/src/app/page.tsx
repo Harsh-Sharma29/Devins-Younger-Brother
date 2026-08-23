@@ -7,8 +7,8 @@ import CodeEditor from "@/components/ide/CodeEditor";
 import Terminal from "@/components/ide/Terminal";
 import PromptInput from "@/components/chat/PromptInput";
 
-// Use environment variable if available, fallback to localhost:8005
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8005";
+// Use environment variable if available, fallback to relative path for Nginx
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
 
 export default function Home() {
   const [activeFile, setActiveFile] = useState("main.py");

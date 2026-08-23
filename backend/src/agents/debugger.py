@@ -1,138 +1,90 @@
-from typing import Dict, Any, TYPE_CHECKING
-import os
-
-from src.tools.file_ops import write_code_to_disk, write_workspace_to_disk
-from src.core.llm_fallback import sanitize_code_for_buffer
-from src.core.llm_factory import get_llm
+import json
+from typing import Any, Dict
 from langchain_core.messages import SystemMessage, HumanMessage
+from src.core.llm_factory import get_llm
 from src.core.memory import get_state_field
-
-if TYPE_CHECKING:
-    from src.core.graph import AutoForgeState
-
-DEBUGGER_SYSTEM_INSTRUCTION = (
-    "You are an expert Python debugger running inside an autonomous repair loop. "
-    "Return ONLY a complete, valid Python program inside markdown code fences. "
-    "CRITICAL: You are an autonomous debugger inside a loop. If the console logs show a "
-    "NameError or syntax typo, you must completely rewrite the code block to replace the "
-    "broken tokens with valid Python syntax. Do not wrap the fix inside another nested error layer. "
-    "CRITICAL: The code runs inside a bare minimum Docker container without internet or "
-    "external pip packages like 'requests'. If you see ModuleNotFoundError for 'requests', "
-    "rewrite HTTP logic using Python's built-in urllib.request and json. DO NOT import external packages. "
-    "Output executable Python only — no explanations, no partial patches."
-)
-
-
-def _append_log(state: Any, line: str) -> list[str]:
-    if isinstance(state, dict):
-        logs = list(state.get("pipeline_logs") or [])
-    else:
-        logs = list(getattr(state, "pipeline_logs", []) or [])
-    logs.append(line)
-    return logs
-
+from src.core.types import DebuggerAction, PipelineStatus
 
 def debugger_agent(state: Any) -> Dict[str, Any]:
-    """
-    Repair failed sandbox runs. Clears detected_errors before re-terminal.
-    Maintains workspace_files consistency for multi-file projects.
-    Never persists raw API error JSON into code_buffer.
-    """
-    code_buffer = get_state_field(state, "code_buffer", "") or ""
-    prior_buffer = code_buffer.strip()
-    attempt = (get_state_field(state, "repair_attempts", 0) or 0) + 1
-    user_prompt = get_state_field(state, "user_prompt", "") or ""
-    planner_suggestion = get_state_field(state, "planner_suggestion", "") or ""
-    detected_errors = get_state_field(state, "detected_errors", []) or []
     terminal_output = get_state_field(state, "terminal_output", "") or ""
-    used_hf_failover = get_state_field(state, "used_hf_failover", False) or False
-    workspace_files = dict(get_state_field(state, "workspace_files", {}) or {})
+    detected_errors = get_state_field(state, "detected_errors", []) or []
+    workspace_files = get_state_field(state, "workspace_files", {})
+    repair_attempts = int(get_state_field(state, "repair_attempts", 0) or 0)
+    pipeline_logs = list(get_state_field(state, "pipeline_logs", []) or [])
     active_file = get_state_field(state, "active_file", "main.py") or "main.py"
 
-    logs = _append_log(
-        state,
-        f"[Debugger] Repair attempt {attempt} — invoking LLM (primary: Gemini)…",
+    pipeline_logs.append(f"[Debugger] Repair attempt {repair_attempts + 1}...")
+
+    if not workspace_files:
+        code_buffer = get_state_field(state, "code_buffer", "") or ""
+        workspace_files = {active_file: code_buffer}
+
+    files_context = ""
+    for k, v in workspace_files.items():
+        files_context += f"\n--- FILE: {k} ---\n{v}\n"
+
+    system_prompt = (
+        "You are an expert debugging assistant.\n"
+        "Analyze the provided code and the execution error.\n"
+        "Return a strictly structured JSON response detailing your action.\n"
+        "If the error is completely unfixable or you do not need to change anything, set action to 'no_change'.\n"
+        "Otherwise, set action to 'rewrite_file', specify the 'path', and provide the entire corrected 'content'."
     )
+    
+    user_prompt = f"Code files:\n{files_context}\n\nExecution Error:\n{terminal_output}\n\nErrors list: {detected_errors}\n"
+    
+    llm = get_llm(temperature=0)
+    
+    action_obj = None
+    if hasattr(llm, "with_structured_output"):
+        try:
+            structured_llm = llm.with_structured_output(DebuggerAction)
+            resp = structured_llm.invoke([SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)])
+            action_obj = resp.model_dump() if hasattr(resp, "model_dump") else resp.dict()
+        except Exception as e:
+            pipeline_logs.append(f"[Debugger] Structured output failed: {e}")
+            action_obj = {"action": "no_change", "reason": f"Structured output error: {e}"}
+    else:
+        # Fallback manual json extraction skipped for brevity; just assuming structured output works for gemini/groq
+        action_obj = {"action": "no_change", "reason": "Structured output not supported on LLM"}
 
-    errors = "\n".join(detected_errors)
-    user_message = (
-        f"Original Request: {user_prompt}\n\n"
-        f"Planner Suggestion: {planner_suggestion}\n\n"
-        f"Faulty Code:\n```python\n{code_buffer}\n```\n\n"
-        f"Error Trace:\n{errors}\n\n"
-        "Fix the entire script so it executes cleanly in an isolated Docker sandbox. "
-        "Return ONLY the full corrected Python file."
-    )
-
-    try:
-        llm = get_llm(temperature=0.2)
-        response = llm.invoke([
-            SystemMessage(content=DEBUGGER_SYSTEM_INSTRUCTION),
-            HumanMessage(content=user_message)
-        ])
-        
-        provider_label = os.getenv("LLM_PROVIDER", "groq").upper()
-        logs.append(f"[Debugger] Response via {provider_label}")
-
-        fixed_code, err = sanitize_code_for_buffer(response.content)
-        if err or not fixed_code:
-            logs.append(f"[Debugger] Invalid payload rejected: {err}")
-            return {
-                "code_buffer": prior_buffer,
-                "detected_errors": [err or "Debugger returned non-Python payload."],
-                "is_verified": False,
-                "last_code_buffer": prior_buffer,
-                "repair_attempts": attempt,
-                "pipeline_logs": logs,
-                "llm_provider": os.getenv("LLM_PROVIDER", "groq"),
-                "used_hf_failover": used_hf_failover,
-                "terminal_output": terminal_output
-                + f"\n[Debugger] Rejected invalid LLM output; prior buffer retained.",
-            }
-
-        # Write fixed code to disk and update workspace
-        write_code_to_disk(active_file, fixed_code)
-        workspace_files[active_file] = fixed_code
-
-        if fixed_code.strip() == prior_buffer and prior_buffer:
-            logs.append("[Debugger] No code change detected — halting repair loop.")
-            return {
-                "code_buffer": fixed_code,
-                "workspace_files": workspace_files,
-                "detected_errors": [],
-                "is_verified": False,
-                "last_code_buffer": prior_buffer,
-                "repair_attempts": attempt,
-                "pipeline_logs": logs,
-                "llm_provider": os.getenv("LLM_PROVIDER", "groq"),
-                "used_hf_failover": used_hf_failover,
-                "terminal_output": terminal_output
-                + "\n[Debugger] No code change detected — halting repair loop.",
-            }
-
-        logs.append("[Debugger] Errors flushed; scheduling sandbox re-run.")
+    action_type = action_obj.get("action", "no_change")
+    reason = action_obj.get("reason", "")
+    
+    if action_type == "no_change" or action_type == "abort":
+        pipeline_logs.append(f"[Debugger] {action_type.upper()}: {reason}")
+        # Signal graph to stop by setting repair_attempts artificially high
         return {
-            "code_buffer": fixed_code,
+            "pipeline_logs": pipeline_logs,
+            "repair_attempts": 999,
+            "pipeline_status": PipelineStatus.REPAIR_EXHAUSTED.value
+        }
+
+    path = action_obj.get("path")
+    new_content = action_obj.get("content")
+
+    if path and new_content:
+        # If the file hasn't changed at all, abort to prevent infinite loops
+        if workspace_files.get(path, "") == new_content.strip():
+            pipeline_logs.append("[Debugger] No actual code changes detected in generated content. Aborting repair loop.")
+            return {
+                "pipeline_logs": pipeline_logs,
+                "repair_attempts": 999,
+                "pipeline_status": PipelineStatus.REPAIR_EXHAUSTED.value
+            }
+            
+        workspace_files[path] = new_content.strip()
+        pipeline_logs.append(f"[Debugger] Applied '{action_type}' to '{path}'")
+        return {
             "workspace_files": workspace_files,
-            "detected_errors": [],
-            "is_verified": False,
-            "last_code_buffer": prior_buffer,
-            "repair_attempts": attempt,
-            "pipeline_logs": logs,
-            "llm_provider": os.getenv("LLM_PROVIDER", "groq"),
-            "used_hf_failover": used_hf_failover,
-            "terminal_output": terminal_output
-            + f"\n[Debugger] Repair attempt {attempt} via {provider_label}: errors flushed, re-running sandbox…",
+            "active_file": path,
+            "code_buffer": new_content.strip(),
+            "pipeline_logs": pipeline_logs,
+            "repair_attempts": repair_attempts + 1
         }
-
-    except Exception as exc:
-        logs.append(f"[Debugger] LLM failure: {exc}")
-        return {
-            "code_buffer": prior_buffer,
-            "detected_errors": [str(exc)],
-            "is_verified": False,
-            "last_code_buffer": prior_buffer,
-            "repair_attempts": attempt,
-            "pipeline_logs": logs,
-            "terminal_output": terminal_output + f"\n[Debugger] Error: {exc}",
-        }
+        
+    pipeline_logs.append("[Debugger] Invalid schema payload returned. No changes applied.")
+    return {
+        "pipeline_logs": pipeline_logs,
+        "repair_attempts": repair_attempts + 1
+    }

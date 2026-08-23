@@ -20,7 +20,10 @@ RESEARCH_SYSTEM = (
 )
 
 
-def research_agent(state: Any) -> Dict[str, Any]:
+from src.core.memory import get_thread_id
+from src.core.pubsub import publish
+
+def research_agent(state: Any, config: Any = None) -> Dict[str, Any]:
     user_prompt = get_state_field(state, "user_prompt", "") or ""
     pipeline_logs = list(get_state_field(state, "pipeline_logs", []) or [])
     history = get_state_field(state, "conversation_history", []) or []
@@ -37,8 +40,12 @@ def research_agent(state: Any) -> Dict[str, Any]:
         llm_result = call_agent_llm(RESEARCH_SYSTEM, message)
         provider = "Hugging Face Hub" if llm_result.used_failover else "Gemini"
         answer = llm_result.content.strip()
-        pipeline_logs.append(f"[Research] Response via {provider}")
+        pipeline_logs.append(f"[Research] Response via {provider}:\n{answer}")
         history = record_assistant_turn(history, answer)
+
+        thread_id = get_thread_id(config) if config else None
+        if thread_id:
+            publish(thread_id, answer)
 
         return {
             "terminal_output": answer,

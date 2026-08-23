@@ -26,6 +26,7 @@ IntentType = Literal["coding", "research", "generic"]
 class AutoForgeState(BaseModel):
 	user_prompt: str = Field(default="", description="The original user prompt")
 	planner_suggestion: str = Field(default="", description="Planner output / file plan")
+	artifact_plan: Dict[str, Any] = Field(default_factory=dict, description="Structured artifact planning output")
 	code_buffer: str = Field(default="", description="The active file's code content")
 	terminal_output: str = Field(default="", description="Output from execution or LLM answer")
 	detected_errors: List[str] = Field(default_factory=list, description="List of detected errors")
@@ -53,6 +54,11 @@ class AutoForgeState(BaseModel):
 		description="Transient message thread for Coder LLM + Tavily tool loop",
 	)
 	coder_tool_rounds: int = Field(default=0, description="Tavily tool invocation cycles (capped)")
+	research_results: List[Dict[str, Any]] = Field(default_factory=list, description="Structured research data passed to coder")
+	execution_status: str = Field(default="pending", description="Terminal execution status")
+	safety_status: str = Field(default="passed", description="Safety threshold check")
+	pipeline_status: str = Field(default="IN_PROGRESS", description="Final pipeline enum state")
+	error_type: str = Field(default="NONE", description="ErrorTaxonomy enum string")
 
 
 def get_initial_state(
@@ -62,6 +68,7 @@ def get_initial_state(
 	return {
 		"user_prompt": user_prompt.strip(),
 		"planner_suggestion": "",
+		"artifact_plan": {},
 		"code_buffer": "",
 		"terminal_output": "",
 		"detected_errors": [],
@@ -80,6 +87,11 @@ def get_initial_state(
 		"active_file": "main.py",
 		"coder_messages": [],
 		"coder_tool_rounds": 0,
+		"research_results": [],
+		"execution_status": "pending",
+		"safety_status": "passed",
+		"pipeline_status": "IN_PROGRESS",
+		"error_type": "NONE",
 	}
 
 
@@ -162,19 +174,36 @@ def route_after_validator(state: Any) -> str:
 	return "coder_model"
 
 
+from src.core.types import ErrorTaxonomy, PipelineStatus
+
 def route_from_terminal(state: Any) -> str:
 	if isinstance(state, dict):
 		detected_errors = state.get("detected_errors") or []
 		is_verified = state.get("is_verified") or False
 		repair_attempts = state.get("repair_attempts") or 0
 		code_buffer = state.get("code_buffer") or ""
+		error_type = state.get("error_type") or "NONE"
 	else:
 		detected_errors = getattr(state, "detected_errors", []) or []
 		is_verified = getattr(state, "is_verified", False) or False
 		repair_attempts = getattr(state, "repair_attempts", 0) or 0
 		code_buffer = getattr(state, "code_buffer", "") or ""
+		error_type = getattr(state, "error_type", "NONE") or "NONE"
 
-	if not detected_errors or is_verified:
+	if is_verified:
+		# Update dictionary in-place if possible (LangGraph usually handles this in nodes, but routing just returns str)
+		return "END"
+
+	# If terminal failed due to infrastructure/limits, DO NOT invoke debugger. It's not a code bug.
+	unrepairable_errors = [
+		ErrorTaxonomy.MEMORY_LIMIT.value,
+		ErrorTaxonomy.TIMEOUT.value,
+		ErrorTaxonomy.PROCESS_LIMIT.value,
+		ErrorTaxonomy.DOCKER_ERROR.value,
+		ErrorTaxonomy.INFRASTRUCTURE_ERROR.value
+	]
+	
+	if error_type in unrepairable_errors:
 		return "END"
 
 	if repair_attempts >= MAX_REPAIR_ATTEMPTS:
